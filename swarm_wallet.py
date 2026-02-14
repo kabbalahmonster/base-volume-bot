@@ -32,7 +32,7 @@ from eth_account import Account
 from web3 import Web3
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from utils import logger, format_address, validate_address, mask_sensitive
 
@@ -174,7 +174,7 @@ class SecureSwarmManager:
         Returns:
             Base64-encoded key for Fernet
         """
-        kdf = PBKDF2(
+        kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
             salt=salt,

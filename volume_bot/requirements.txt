@@ -5,3 +5,4 @@ rich>=13.0.0
 python-dotenv>=1.0.0
 requests>=2.31.0
 eth_abi>=4.0.0
+tenacity>=8.0.0
