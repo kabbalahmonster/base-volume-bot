@@ -319,6 +319,7 @@ class VolumeBot:
             # Sign and send
             signed = self.account.sign_transaction(tx)
             tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+            console.print(f"[dim]TX: {self.w3.to_hex(tx_hash)}[/dim]")
 
             # Wait for receipt
             receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
@@ -331,6 +332,7 @@ class VolumeBot:
                 return True
             else:
                 console.print(f"[red]✗ Transaction failed[/red]")
+                console.print(f"[red]  Status: {receipt['status']}, Gas: {receipt['gasUsed']}[/red]")
                 self.failed_buys += 1
                 return False
                 
@@ -377,8 +379,9 @@ class VolumeBot:
             
             signed_approve = self.account.sign_transaction(approve_tx)
             approve_hash = self.w3.eth.send_raw_transaction(signed_approve.raw_transaction)
+            console.print(f"[dim]Approve TX: {self.w3.to_hex(approve_hash)}[/dim]")
             self.w3.eth.wait_for_transaction_receipt(approve_hash, timeout=120)
-            
+
             # Build swap
             deadline = int(time.time()) + 300
             swap_tx = self.router.functions.exactInputSingle({
@@ -397,9 +400,10 @@ class VolumeBot:
                 'nonce': self.w3.eth.get_transaction_count(self.account.address),
                 'chainId': 8453
             })
-            
+
             signed_swap = self.account.sign_transaction(swap_tx)
             swap_hash = self.w3.eth.send_raw_transaction(signed_swap.raw_transaction)
+            console.print(f"[dim]Swap TX: {self.w3.to_hex(swap_hash)}[/dim]")
             receipt = self.w3.eth.wait_for_transaction_receipt(swap_hash, timeout=120)
 
             if receipt['status'] == 1:
@@ -408,6 +412,7 @@ class VolumeBot:
                 return True
             else:
                 console.print("[red]✗ Sell transaction failed[/red]")
+                console.print(f"[red]  Status: {receipt['status']}, Gas: {receipt['gasUsed']}[/red]")
                 return False
                 
         except Exception as e:
@@ -490,6 +495,7 @@ class VolumeBot:
                 
                 signed = self.account.sign_transaction(tx)
                 tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+                console.print(f"[dim]TX: {self.w3.to_hex(tx_hash)}[/dim]")
 
                 receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
 
@@ -497,6 +503,9 @@ class VolumeBot:
                     console.print(f"[green]✓ ETH sent: {self.w3.to_hex(tx_hash)[:20]}...[/green]")
                 else:
                     console.print("[red]✗ ETH transfer failed[/red]")
+                    console.print(f"[red]  Status: {receipt['status']}[/red]")
+                    console.print(f"[red]  Gas used: {receipt['gasUsed']}[/red]")
+                    console.print(f"[red]  Block: {receipt['blockNumber']}[/red]")
                     return False
 
             # Withdraw $COMPUTE
@@ -516,6 +525,7 @@ class VolumeBot:
                 
                 signed = self.account.sign_transaction(tx)
                 tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+                console.print(f"[dim]TX: {self.w3.to_hex(tx_hash)}[/dim]")
 
                 receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
 
@@ -523,6 +533,9 @@ class VolumeBot:
                     console.print(f"[green]✓ $COMPUTE sent: {self.w3.to_hex(tx_hash)[:20]}...[/green]")
                 else:
                     console.print("[red]✗ $COMPUTE transfer failed[/red]")
+                    console.print(f"[red]  Status: {receipt['status']}[/red]")
+                    console.print(f"[red]  Gas used: {receipt['gasUsed']}[/red]")
+                    console.print(f"[red]  Block: {receipt['blockNumber']}[/red]")
                     return False
             
             console.print("\n[bold green]✓ Withdrawal complete![/bold green]")
