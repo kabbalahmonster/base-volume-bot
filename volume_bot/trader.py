@@ -588,3 +588,7 @@ class ComputeTrader:
             "total_gas_spent_eth": self.total_gas_spent_eth,
             "success_rate": (self.successful_trades / self.total_trades * 100) if self.total_trades > 0 else 0
         }
+
+
+# Backward compatibility alias
+UniswapV3Trader = ComputeTrader
