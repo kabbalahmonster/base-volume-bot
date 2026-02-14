@@ -16,9 +16,11 @@ from dataclasses import dataclass, asdict
 import yaml
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
-from utils import logger
+# Setup basic logging for this module
+import logging
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -84,7 +86,7 @@ class ConfigManager:
     
     def _derive_key(self, password: str, salt: bytes) -> bytes:
         """Derive encryption key from password using PBKDF2."""
-        kdf = PBKDF2(
+        kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
             salt=salt,
