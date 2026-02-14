@@ -44,9 +44,12 @@ ROUTER = "0x2626664c2603336E57B271c5C0b26F421741e481"
 
 RPC_URLS = {
     "base": [
-        "https://base.llamarpc.com",
+        # NOTE: base.llamarpc.com has been observed returning empty contract code
+        # (code_len=0) for the COMPUTE token contract, causing BadFunctionCallOutput
+        # when calling ERC20 methods like decimals()/balanceOf(). Prefer official/paid RPCs.
         "https://mainnet.base.org",
         "https://base.drpc.org",
+        "https://base.llamarpc.com",
     ]
 }
 
