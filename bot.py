@@ -624,30 +624,52 @@ class VolumeBot:
 
 
 def setup_command():
-    """Interactive setup"""
+    """Interactive setup - generates new wallet automatically"""
     console.print(Panel.fit(
-        "[bold cyan]$COMPUTE Volume Bot - Setup[/bold cyan]",
+        "[bold cyan]$COMPUTE Volume Bot - Setup[/bold cyan]\n"
+        "[dim]Auto-Generated Wallet Mode[/dim]",
         box=box.DOUBLE
     ))
     
-    console.print("\n[dim]This will encrypt and save your wallet.[/dim]\n")
+    console.print("\n[yellow]⚠️  IMPORTANT:[/yellow]")
+    console.print("This will generate a NEW trading wallet for you.")
+    console.print("The private key will be encrypted - you will NOT see it.")
+    console.print("You MUST fund the displayed address before running the bot.\n")
     
-    # Get private key
-    console.print("[yellow]Enter your private key (with 0x prefix):[/yellow]")
-    private_key = getpass.getpass("> ")
-    
-    if not private_key.startswith("0x"):
-        console.print("[red]Private key must start with 0x[/red]")
+    confirm = input("Generate new trading wallet? (yes/no): ").lower()
+    if confirm not in ['yes', 'y']:
+        console.print("[yellow]Setup cancelled.[/yellow]")
         return
     
+    # Generate new wallet
+    import secrets
+    from eth_account import Account
+    
+    # Generate with extra entropy for security
+    extra_entropy = secrets.token_hex(32)
+    account = Account.create(extra_entropy=extra_entropy)
+    private_key = account.key.hex()
+    wallet_address = account.address
+    
+    console.print(f"\n[green]✓ New wallet generated![/green]")
+    console.print(f"\n[bold cyan]Your Wallet Address:[/bold cyan]")
+    console.print(f"[bold]{wallet_address}[/bold]")
+    console.print("\n[yellow]⚠️  FUND THIS ADDRESS BEFORE RUNNING THE BOT[/yellow]")
+    console.print("Send ETH on Base network to the address above.")
+    console.print("The bot needs ETH for gas and trading.\n")
+    
     # Get password
-    console.print("\n[yellow]Create encryption password:[/yellow]")
+    console.print("[yellow]Create encryption password (min 8 characters):[/yellow]")
     password = getpass.getpass("> ")
     
-    console.print("[yellow]Confirm password:[/yellow]")
-    confirm = getpass.getpass("> ")
+    if len(password) < 8:
+        console.print("[red]Password must be at least 8 characters![/red]")
+        return
     
-    if password != confirm:
+    console.print("[yellow]Confirm password:[/yellow]")
+    confirm_pw = getpass.getpass("> ")
+    
+    if password != confirm_pw:
         console.print("[red]Passwords don't match![/red]")
         return
     
@@ -662,7 +684,14 @@ def setup_command():
             json.dump(config.to_dict(), f, indent=2)
         
         console.print("[green]✓ Default config created (bot_config.json)[/green]")
-        console.print("\n[dim]Run the bot with: python bot.py run[/dim]")
+        console.print("\n" + "="*60)
+        console.print("[bold]NEXT STEPS:[/bold]")
+        console.print("1. Fund this address with ETH on Base:")
+        console.print(f"   {wallet_address}")
+        console.print("2. Run: python bot.py balance (to verify funding)")
+        console.print("3. Run: python bot.py run --dry-run (test mode)")
+        console.print("4. Run: python bot.py run (live trading)")
+        console.print("="*60)
 
 
 def run_command(dry_run: bool = False):
