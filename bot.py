@@ -153,7 +153,7 @@ class BotConfig:
     sell_after_buys: int = 10
     slippage_percent: float = 2.0
     max_gas_gwei: float = 0.5
-    min_eth_balance: float = 0.01
+    min_eth_balance: float = 0.001
     dry_run: bool = False
     log_level: str = "INFO"
     
