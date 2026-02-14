@@ -500,25 +500,56 @@ class VolumeBot:
 
 
 def setup_command():
-    """Interactive setup"""
+    """Interactive setup with auto-generated wallet"""
     console.print(Panel.fit(
-        "[bold cyan]$COMPUTE Volume Bot - Setup[/bold cyan]",
+        "[bold cyan]$COMPUTE Volume Bot - Setup[/bold cyan]\n"
+        "[dim]Auto-Generated Secure Wallet[/dim]",
         box=box.DOUBLE
     ))
     
-    console.print("\n[dim]This will encrypt and save your wallet.[/dim]\n")
+    console.print("\n[dim]This will generate a new Ethereum wallet for trading.[/dim]")
+    console.print("[dim]Your private key will be encrypted and never displayed.[/dim]\n")
     
-    # Get private key
-    console.print("[yellow]Enter your private key (with 0x prefix):[/yellow]")
-    private_key = getpass.getpass("> ")
+    # Confirm wallet generation
+    console.print("[yellow]Generate new trading wallet? (yes/no):[/yellow]")
+    confirm_gen = input("> ").lower().strip()
     
-    if not private_key.startswith("0x"):
-        console.print("[red]Private key must start with 0x[/red]")
+    if confirm_gen not in ("yes", "y"):
+        console.print("[yellow]Setup cancelled.[/yellow]")
         return
     
-    # Get password
-    console.print("\n[yellow]Create encryption password:[/yellow]")
+    # Generate new wallet
+    console.print("\n[cyan]🔐 Generating new Ethereum wallet...[/cyan]")
+    
+    # Create account with extra entropy for security
+    import secrets
+    extra_entropy = secrets.token_hex(32)
+    account = Account.create(extra_entropy=extra_entropy)
+    
+    private_key = account.key.hex()
+    public_address = account.address
+    
+    console.print(f"[green]✓ Wallet generated successfully![/green]\n")
+    
+    # Display public address with clear funding instructions
+    console.print(Panel(
+        f"[bold cyan]📝 Your Trading Wallet Address[/bold cyan]\n\n"
+        f"[bold]{public_address}[/bold]\n\n"
+        f"[yellow]⚠️  IMPORTANT: Fund this address before running the bot![/yellow]\n"
+        f"[dim]• Send ETH on Base network for trading and gas fees[/dim]\n"
+        f"[dim]• Recommended minimum: 0.05 ETH[/dim]\n"
+        f"[dim]• You can verify the address on basescan.org[/dim]",
+        box=box.ROUNDED
+    ))
+    
+    # Get password for encryption
+    console.print("\n[yellow]Create encryption password to secure your wallet:[/yellow]")
+    console.print("[dim](You will need this password every time you run the bot)[/dim]")
     password = getpass.getpass("> ")
+    
+    if len(password) < 8:
+        console.print("[red]Password must be at least 8 characters![/red]")
+        return
     
     console.print("[yellow]Confirm password:[/yellow]")
     confirm = getpass.getpass("> ")
@@ -530,7 +561,7 @@ def setup_command():
     # Encrypt and save
     key_manager = SecureKeyManager()
     if key_manager.encrypt_and_save(private_key, password):
-        console.print("\n[green]✓ Wallet encrypted and saved![/green]")
+        console.print("\n[green]✓ Wallet encrypted and saved securely![/green]")
         
         # Create default config
         config = BotConfig()
@@ -538,7 +569,18 @@ def setup_command():
             json.dump(config.to_dict(), f, indent=2)
         
         console.print("[green]✓ Default config created (bot_config.json)[/green]")
-        console.print("\n[dim]Run the bot with: python volume_bot.py run[/dim]")
+        
+        # Show next steps
+        console.print(Panel(
+            f"[bold green]✓ Setup Complete![/bold green]\n\n"
+            f"[cyan]Next Steps:[/cyan]\n"
+            f"1. [yellow]Fund your wallet:[/yellow] Send ETH to {public_address}\n"
+            f"2. [yellow]Test mode:[/yellow] python bot.py run --dry-run\n"
+            f"3. [yellow]Run live:[/yellow] python bot.py run\n\n"
+            f"[dim]Your private key is encrypted and cannot be recovered without your password.[/dim]\n"
+            f"[dim]Wallet file: .wallet.enc (permissions: 600)[/dim]",
+            box=box.DOUBLE
+        ))
 
 
 def run_command(dry_run: bool = False):

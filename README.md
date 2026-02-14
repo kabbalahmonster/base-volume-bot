@@ -46,13 +46,38 @@ pip install -r requirements.txt
 python bot.py setup
 ```
 
+The setup will:
+1. **Generate a new Ethereum wallet** automatically
+2. **Encrypt the private key** with your password (never displayed)
+3. **Display your public address** for funding
+4. **Create default configuration**
+
 You'll be prompted for:
-- Private key (with 0x prefix)
-- Encryption password (used to encrypt your key)
+- Confirmation to generate a new wallet
+- Encryption password (used to encrypt your key - minimum 8 characters)
 
 This creates:
-- `.bot_wallet.enc` - Encrypted private key (permissions 600)
+- `.wallet.enc` - Encrypted private key (permissions 600)
 - `bot_config.json` - Bot configuration
+
+#### Funding Your Wallet
+
+After setup, you'll see your wallet address. You **must fund it** before running:
+
+```
+📝 Your Trading Wallet Address
+0x... (your generated address)
+
+⚠️  IMPORTANT: Fund this address before running the bot!
+• Send ETH on Base network for trading and gas fees
+• Recommended minimum: 0.05 ETH
+• You can verify the address on basescan.org
+```
+
+Send ETH on Base network to this address. The bot needs ETH to:
+- Execute buy transactions
+- Pay for gas fees
+- Have reserves for sell operations
 
 ### Configure
 
@@ -134,10 +159,12 @@ python bot.py withdraw 0xYourAddress --compute
 
 ### Security Notes
 
+- **Auto-generated wallets** - Private key is generated locally and never exposed to user
 - **Private keys are encrypted** using PBKDF2-HMAC-SHA256 with 600k iterations + random salt
 - **Wallet file permissions** are set to 600 (owner read/write only)
-- **Never commit** your `.bot_wallet.enc` or `bot_config.json` to version control
+- **Never commit** your `.wallet.enc` or `bot_config.json` to version control
 - **Backup your encryption password** - without it, the private key cannot be recovered
+- **Backup your wallet address** - you'll need it to send funds to the bot
 
 ## 🏗️ Architecture
 
@@ -165,16 +192,48 @@ volume_bot/
 
 ### Security Flow
 
+#### Auto-Generated Wallet Creation
+
 ```
-User Password + Random Salt
+┌─────────────────┐
+│  User confirms  │
+│  "Generate      │
+│   wallet?"      │
+└────────┬────────┘
+         ↓
+┌─────────────────┐     ┌──────────────────┐
+│  os.urandom()   │────→│  eth_account.    │
+│  + secrets      │     │  Account.create()│
+└─────────────────┘     └────────┬─────────┘
+                                 ↓
+                    ┌─────────────────────────┐
+                    │  Private Key Generated  │
+                    │  (never displayed)      │
+                    └───────────┬─────────────┘
+                                ↓
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│  User Password  │───→│  PBKDF2-HMAC    │───→│  Fernet Key     │
+└─────────────────┘    │  (480k iter)    │    └────────┬────────┘
+                       └─────────────────┘             ↓
+                                            ┌─────────────────┐
+                                            │  Encrypt Key    │
+                                            │  + Save to      │
+                                            │  .wallet.enc    │
+                                            └─────────────────┘
+```
+
+#### Runtime Decryption
+
+```
+User Password + Stored Salt
            ↓
-    PBKDF2-HMAC-SHA256 (600k iterations)
+    PBKDF2-HMAC-SHA256 (480k iterations)
            ↓
       Fernet Encryption Key
            ↓
-    Encrypt Private Key → .bot_wallet.enc
+    Decrypt Private Key → Memory (runtime only)
            ↓
-    Decrypt at Runtime (with password)
+    Sign Transactions → Send to Base Network
 ```
 
 ## 💰 Cost Estimation
@@ -199,14 +258,86 @@ For a typical run with:
 **Daily Volume**: ~12 cycles × 10 buys × $6 = **$720 volume**  
 **Daily Gas Cost**: ~12 cycles × $0.006 = **~$0.07**
 
+## 🔐 Auto-Generated Wallet Security
+
+The bot now uses **auto-generated wallets** for enhanced security:
+
+### Benefits
+
+| Feature | Old Method | New Auto-Generated |
+|---------|-----------|-------------------|
+| Private Key Exposure | User sees and enters key | Key never displayed |
+| Copy/Paste Risk | High (clipboard exposure) | None |
+| Key Generation | External wallet | Cryptographically secure local generation |
+| User Error Risk | Wrong key, format errors | Eliminated |
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Setup Process                                              │
+├─────────────────────────────────────────────────────────────┤
+│  1. Bot generates new wallet using eth_account             │
+│     └── Uses OS-level entropy (secrets.token_hex)          │
+│                                                            │
+│  2. Private key encrypted immediately                       │
+│     └── PBKDF2-HMAC-SHA256 (480k iterations)               │
+│     └── Fernet symmetric encryption                         │
+│     └── Random salt per wallet                              │
+│                                                            │
+│  3. Only public address shown to user                       │
+│     └── User funds this address with ETH                   │
+│                                                            │
+│  4. Encrypted key saved to .wallet.enc (permissions 600)   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Recovery
+
+⚠️ **Important**: Since the private key is never shown, you **must**:
+1. Save your wallet address to send funds to it
+2. Remember your encryption password (no recovery possible)
+3. Consider exporting the wallet later if needed (see below)
+
+### Exporting Your Private Key (Optional)
+
+If you need to access the private key later (e.g., to import into MetaMask):
+
+```bash
+# Create a temporary export script
+cat > export_wallet.py << 'EOF'
+import json
+import base64
+from cryptography.fernet import Fernet
+import hashlib
+import getpass
+
+password = getpass.getpass("Enter wallet password: ")
+
+with open(".wallet.enc", "r") as f:
+    data = json.load(f)
+
+key = hashlib.sha256(password.encode()).digest()
+key = base64.urlsafe_b64encode(key)
+f = Fernet(key)
+decrypted = f.decrypt(data["encrypted"].encode())
+
+print(f"\nPrivate Key: {decrypted.decode()}")
+print("⚠️  Store this securely and delete this script!")
+EOF
+
+python export_wallet.py
+rm export_wallet.py
+```
+
 ## 🔒 Security Checklist
 
 Before running with real funds:
 
-- [ ] Private key stored in encrypted file only
-- [ ] Encryption password is strong and backed up
-- [ ] Wallet file has 600 permissions
-- [ ] Wallet has sufficient ETH for gas
+- [ ] Wallet has been generated and funded with ETH
+- [ ] Wallet address saved for future reference
+- [ ] Encryption password is strong (8+ chars) and backed up
+- [ ] Wallet file (.wallet.enc) has 600 permissions
 - [ ] Dry run tested successfully
 - [ ] Machine is secure (no malware, firewall enabled)
 - [ ] Bot running in screen/tmux or as service
@@ -236,7 +367,7 @@ Before running with real funds:
 
 - Wrong password - try again
 - Wallet file may be corrupted
-- Re-run `python bot.py setup` if needed
+- Re-run `python bot.py setup` to generate a new wallet (old wallet will be lost!)
 
 ### View Logs
 
