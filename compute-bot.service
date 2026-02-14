@@ -1,0 +1,42 @@
+[Unit]
+Description=$COMPUTE Volume Bot
+After=network.target
+
+[Service]
+Type=simple
+User=compute-bot
+Group=compute-bot
+
+# Working directory
+WorkingDirectory=/opt/compute-bot
+
+# Environment
+Environment="PYTHONUNBUFFERED=1"
+Environment="PYTHONDONTWRITEBYTECODE=1"
+Environment="PATH=/opt/compute-bot/venv/bin"
+
+# Command to run
+ExecStart=/opt/compute-bot/venv/bin/python bot.py run --config /opt/compute-bot/config/bot_config.yaml
+
+# Restart policy
+Restart=always
+RestartSec=10
+StartLimitInterval=60s
+StartLimitBurst=3
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=compute-bot
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/compute-bot/logs /opt/compute-bot/config
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target
