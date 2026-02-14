@@ -318,11 +318,11 @@ class VolumeBot:
             
             # Sign and send
             signed = self.account.sign_transaction(tx)
-            tx_hash = self.w3.eth.send_raw_transaction(signed.rawTransaction)
-            
+            tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+
             # Wait for receipt
             receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-            
+
             if receipt['status'] == 1:
                 console.print(f"[green]✓ Buy successful![/green]")
                 console.print(f"[dim]  TX: {self.w3.to_hex(tx_hash)[:20]}...[/dim]")
@@ -376,7 +376,7 @@ class VolumeBot:
             })
             
             signed_approve = self.account.sign_transaction(approve_tx)
-            approve_hash = self.w3.eth.send_raw_transaction(signed_approve.rawTransaction)
+            approve_hash = self.w3.eth.send_raw_transaction(signed_approve.raw_transaction)
             self.w3.eth.wait_for_transaction_receipt(approve_hash, timeout=120)
             
             # Build swap
@@ -399,9 +399,9 @@ class VolumeBot:
             })
             
             signed_swap = self.account.sign_transaction(swap_tx)
-            swap_hash = self.w3.eth.send_raw_transaction(signed_swap.rawTransaction)
+            swap_hash = self.w3.eth.send_raw_transaction(signed_swap.raw_transaction)
             receipt = self.w3.eth.wait_for_transaction_receipt(swap_hash, timeout=120)
-            
+
             if receipt['status'] == 1:
                 console.print(f"[green]✓ Sell successful![/green]")
                 console.print(f"[dim]  TX: {self.w3.to_hex(swap_hash)[:20]}...[/dim]")
@@ -489,16 +489,16 @@ class VolumeBot:
                 }
                 
                 signed = self.account.sign_transaction(tx)
-                tx_hash = self.w3.eth.send_raw_transaction(signed.rawTransaction)
-                
+                tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+
                 receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-                
+
                 if receipt['status'] == 1:
                     console.print(f"[green]✓ ETH sent: {self.w3.to_hex(tx_hash)[:20]}...[/green]")
                 else:
                     console.print("[red]✗ ETH transfer failed[/red]")
                     return False
-            
+
             # Withdraw $COMPUTE
             if withdraw_compute and compute_balance > 0:
                 console.print(f"\n[dim]Sending {compute_balance:.6f} $COMPUTE...[/dim]")
@@ -515,10 +515,10 @@ class VolumeBot:
                 })
                 
                 signed = self.account.sign_transaction(tx)
-                tx_hash = self.w3.eth.send_raw_transaction(signed.rawTransaction)
-                
+                tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+
                 receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-                
+
                 if receipt['status'] == 1:
                     console.print(f"[green]✓ $COMPUTE sent: {self.w3.to_hex(tx_hash)[:20]}...[/green]")
                 else:
