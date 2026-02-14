@@ -1,0 +1,29 @@
+# Swarm Wallet Configuration
+# Copy this file to swarm_config.yaml and customize
+
+# Number of wallets in the swarm
+num_wallets: 10
+
+# Minimum ETH to keep in each wallet (gas reserve)
+min_eth_per_wallet: 0.01
+
+# ETH to fund each wallet initially
+eth_fund_amount: 0.02
+
+# Wallet rotation mode
+# Options: round_robin, random, least_used, balance
+rotation_mode: round_robin
+
+# File paths
+key_file: "./swarm_wallets.enc"
+audit_log: "./swarm_audit.log"
+
+# Token addresses (Base mainnet)
+compute_token: "0x696381f39F17cAD67032f5f52A4924ce84e51BA3"
+weth_address: "0x4200000000000000000000000000000000000006"
+
+# Operation mode
+dry_run: false
+
+# RPC endpoint
+rpc_url: "https://mainnet.base.org"
