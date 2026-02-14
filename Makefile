@@ -1,4 +1,4 @@
-.PHONY: help install init run status test clean lint format
+.PHONY: help install setup run dry-run balance withdraw test clean lint format
 
 PYTHON := python3
 PIP := pip3
@@ -11,20 +11,24 @@ help: ## Show this help message
 install: ## Install dependencies
 	$(PIP) install -r requirements.txt
 
-init: ## Initialize bot configuration
-	$(BOT) init
+setup: ## Initialize bot (create encrypted wallet and config)
+	$(BOT) setup
 
 run: ## Start the bot
 	$(BOT) run
 
-dry-run: ## Start bot in dry-run mode
+dry-run: ## Start bot in dry-run mode (no real transactions)
 	$(BOT) run --dry-run
 
-status: ## Check bot status
-	$(BOT) status
+balance: ## Check wallet balances
+	$(BOT) balance
 
-wallet: ## Show wallet info
-	$(BOT) wallet-info
+withdraw: ## Withdraw funds (usage: make withdraw ADDR=0x... AMOUNT=0.5)
+	@if [ -z "$(ADDR)" ]; then \
+		echo "Usage: make withdraw ADDR=0xYourAddress [AMOUNT=0.5] [--compute]"; \
+		exit 1; \
+	fi
+	$(BOT) withdraw $(ADDR) $(if $(AMOUNT),--amount $(AMOUNT),) $(if $(COMPUTE),--compute,)
 
 test: ## Run tests (if any)
 	$(PYTHON) -m pytest tests/ -v || echo "No tests yet"
@@ -49,19 +53,20 @@ venv: ## Create virtual environment
 docker-build: ## Build Docker image
 	docker build -t compute-bot .
 
-docker-run: ## Run Docker container
-	docker run -v $(PWD)/config:/app/config compute-bot
+docker-run: ## Run Docker container (mounts current dir as config)
+	docker run -v $(PWD):/app/config compute-bot
 
-backup: ## Backup configuration
+backup: ## Backup configuration and wallet
 	@mkdir -p backups
-	@cp bot_config.yaml backups/bot_config_$(shell date +%Y%m%d_%H%M%S).yaml 2>/dev/null || echo "No config to backup"
+	@cp bot_config.json backups/bot_config_$(shell date +%Y%m%d_%H%M%S).json 2>/dev/null || echo "No config to backup"
+	@cp .bot_wallet.enc backups/.bot_wallet_$(shell date +%Y%m%d_%H%M%S).enc 2>/dev/null || echo "No wallet to backup"
 	@echo "Backup created in backups/"
 
 logs: ## Show recent logs
-	tail -n 50 bot.log 2>/dev/null || echo "No log file found"
+	tail -n 50 volume_bot.log 2>/dev/null || echo "No log file found"
 
 monitor: ## Monitor logs in real-time
-	tail -f bot.log
+	tail -f volume_bot.log
 
 stop: ## Stop running bot (if using systemd)
 	sudo systemctl stop compute-bot 2>/dev/null || echo "Bot not running as service"
@@ -69,6 +74,6 @@ stop: ## Stop running bot (if using systemd)
 restart: ## Restart bot (if using systemd)
 	sudo systemctl restart compute-bot 2>/dev/null || echo "Bot not running as service"
 
-update: ## Update bot code
+update: ## Update bot code and dependencies
 	git pull
 	$(PIP) install -r requirements.txt

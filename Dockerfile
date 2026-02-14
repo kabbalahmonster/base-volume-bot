@@ -15,13 +15,17 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY *.py ./
+COPY swarm/ ./swarm/
 
-# Don't copy config - it should be mounted as volume
+# Don't copy config/wallet - mount as volumes
 VOLUME ["/app/config"]
 
 # Environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# Default command
-CMD ["python", "bot.py", "run", "--config", "/app/config/bot_config.yaml"]
+# Set working directory for config files
+WORKDIR /app/config
+
+# Default command (uses bot_config.json and .bot_wallet.enc in /app/config)
+CMD ["python", "/app/bot.py", "run"]

@@ -8,12 +8,12 @@ A production-ready, secure Python trading bot for generating volume on $COMPUTE 
 
 ## 📋 Features
 
-- **🔐 Secure**: Private key encryption with PBKDF2 + Fernet
-- **⛽ Gas Optimized**: EIP-1559 support, dynamic gas pricing
+- **🔐 Secure**: Private key encryption with PBKDF2-HMAC-SHA256 (600k iterations)
+- **⛽ Gas Optimized**: Dynamic gas pricing with configurable limits
 - **🔄 Retry Logic**: Exponential backoff for failed transactions
 - **📊 Rich CLI**: Beautiful terminal UI with progress bars and tables
 - **🧪 Dry Run Mode**: Test without spending real funds
-- **📈 Health Monitoring**: Built-in health checks and status reporting
+- **💰 Withdraw**: Built-in withdrawal to external wallets
 - **🛡️ Slippage Protection**: Configurable slippage tolerance
 - **📝 Comprehensive Logging**: File and console logging
 
@@ -23,14 +23,13 @@ A production-ready, secure Python trading bot for generating volume on $COMPUTE 
 
 - Python 3.9 or higher
 - An Ethereum wallet with ETH on Base
-- Base RPC endpoint (public or private)
 
 ### Installation
 
 ```bash
-# Clone or download the bot
-git clone <repository-url>
-cd volume_bot
+# Clone the repository
+git clone https://github.com/kabbalahmonster/base-volume-bot.git
+cd base-volume-bot/volume_bot
 
 # Create virtual environment
 python -m venv venv
@@ -40,119 +39,150 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### Configuration
+### First-Time Setup
 
 ```bash
-# Initialize configuration (interactive setup)
-python bot.py init
-
-# Or specify custom config path
-python bot.py init --config ./my_config.yaml
+# Initialize encrypted wallet and config
+python bot.py setup
 ```
 
 You'll be prompted for:
-- Private key (encrypted, never stored in plain text)
-- RPC URL
-- Buy amount and interval
-- Gas settings
-- Encryption password
+- Private key (with 0x prefix)
+- Encryption password (used to encrypt your key)
+
+This creates:
+- `.bot_wallet.enc` - Encrypted private key (permissions 600)
+- `bot_config.json` - Bot configuration
+
+### Configure
+
+Edit `bot_config.json` to customize:
+
+```json
+{
+  "chain": "base",
+  "buy_amount_eth": 0.002,
+  "buy_interval_minutes": 5,
+  "sell_after_buys": 10,
+  "slippage_percent": 2.0,
+  "max_gas_gwei": 0.5,
+  "min_eth_balance": 0.01,
+  "dry_run": false,
+  "log_level": "INFO"
+}
+```
 
 ### Run the Bot
 
 ```bash
-# Start trading
-python bot.py run
-
-# With options
-python bot.py run --verbose --config ./custom_config.yaml
-
-# Dry run mode (no real transactions)
+# Test in dry-run mode first
 python bot.py run --dry-run
+
+# Run live
+python bot.py run
 ```
 
 ## 📖 Commands
 
 | Command | Description |
 |---------|-------------|
-| `init` | Initialize configuration with encrypted keys |
+| `setup` | Initialize encrypted wallet and config |
 | `run` | Start the trading bot |
-| `status` | Check configuration status |
-| `wallet-info` | Display wallet balances |
+| `run --dry-run` | Test mode (no real transactions) |
+| `balance` | Display wallet balances |
+| `withdraw <address>` | Withdraw funds to external wallet |
+
+### Withdraw Examples
+
+```bash
+# Withdraw specific ETH amount
+python bot.py withdraw 0xYourAddress --amount 0.5
+
+# Withdraw all ETH (keeps 0.01 for gas)
+python bot.py withdraw 0xYourAddress
+
+# Withdraw ETH and all COMPUTE tokens
+python bot.py withdraw 0xYourAddress --compute
+```
 
 ## ⚙️ Configuration
 
-### Default Settings
+### Default Settings (bot_config.json)
 
-```yaml
-# Network
-rpc_url: https://mainnet.base.org
-chain_id: 8453
-
-# Token Addresses
-compute_token: "0x696381f39F17cAD67032f5f52A4924ce84e51BA3"
-weth_address: "0x4200000000000000000000000000000000000006"
-
-# Trading Parameters
-buy_amount_eth: 0.002          # Amount per buy (~$5-10)
-buy_interval_seconds: 300      # 5 minutes between buys
-sell_after_buys: 10            # Sell after 10 buys
-
-# Gas Settings
-max_gas_price_gwei: 5.0        # Maximum gas price
-slippage_percent: 2.0          # 2% slippage tolerance
-gas_limit_buffer: 1.2          # 20% gas buffer
-
-# Operation
-max_retries: 3
-retry_delay_seconds: 5
-dry_run: false
-log_level: INFO
+```json
+{
+  "chain": "base",
+  "buy_amount_eth": 0.002,
+  "buy_interval_minutes": 5,
+  "sell_after_buys": 10,
+  "slippage_percent": 2.0,
+  "max_gas_gwei": 0.5,
+  "min_eth_balance": 0.01,
+  "dry_run": false,
+  "log_level": "INFO"
+}
 ```
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `buy_amount_eth` | Amount of ETH per buy | 0.002 (~$6) |
+| `buy_interval_minutes` | Minutes between buys | 5 |
+| `sell_after_buys` | Sell after N buys | 10 |
+| `slippage_percent` | Max slippage tolerance | 2.0% |
+| `max_gas_gwei` | Max gas price in Gwei | 0.5 |
+| `min_eth_balance` | Minimum ETH to keep | 0.01 |
 
 ### Security Notes
 
-- **Private keys are encrypted** using your password + random salt
-- **Config file permissions** are set to 600 (owner read/write only)
-- **Never commit** your config file to version control
+- **Private keys are encrypted** using PBKDF2-HMAC-SHA256 with 600k iterations + random salt
+- **Wallet file permissions** are set to 600 (owner read/write only)
+- **Never commit** your `.bot_wallet.enc` or `bot_config.json` to version control
 - **Backup your encryption password** - without it, the private key cannot be recovered
 
 ## 🏗️ Architecture
 
 ```
 volume_bot/
-├── bot.py           # CLI entry point and main loop
-├── config.py        # Configuration management with encryption
-├── trader.py        # Uniswap V3 trading logic
-├── wallet.py        # Secure wallet operations
-├── utils.py         # Helpers, gas optimization, logging
-├── requirements.txt # Python dependencies
-└── README.md        # This file
+├── bot.py              # CLI entry point and main loop
+├── wallet.py           # Secure key management (PBKDF2 + Fernet)
+├── trader.py           # Uniswap V3 trading logic
+├── swarm/              # Swarm wallet feature (optional)
+│   ├── manager.py
+│   └── __init__.py
+├── requirements.txt    # Python dependencies
+├── bot_config.json     # Bot configuration (auto-created)
+├── .bot_wallet.enc     # Encrypted private key (auto-created)
+└── README.md           # This file
 ```
 
 ### Trading Flow
 
-1. **Initialize**: Load encrypted config, connect to Base
+1. **Initialize**: Load encrypted wallet, connect to Base
 2. **Buy Loop**: Execute buys at configured intervals
 3. **Count**: Track number of successful buys
-4. **Sell Trigger**: When buy count reaches threshold, sell all
+4. **Sell Trigger**: When buy count reaches threshold, sell all COMPUTE
 5. **Repeat**: Reset counter and continue
 
 ### Security Flow
 
 ```
-User Password + Salt → PBKDF2 → Fernet Key → Encrypt Private Key
-                                              ↓
-                                    Config File (encrypted)
-                                              ↓
-User Password + Salt → PBKDF2 → Fernet Key → Decrypt at Runtime
+User Password + Random Salt
+           ↓
+    PBKDF2-HMAC-SHA256 (600k iterations)
+           ↓
+      Fernet Encryption Key
+           ↓
+    Encrypt Private Key → .bot_wallet.enc
+           ↓
+    Decrypt at Runtime (with password)
 ```
 
 ## 💰 Cost Estimation
 
 ### Gas Costs (Base Network)
 
-| Operation | Estimated Gas | Cost @ 1 Gwei |
-|-----------|---------------|---------------|
+| Operation | Estimated Gas | Cost @ 0.1 Gwei |
+|-----------|---------------|-----------------|
 | Buy (ETH→Token) | ~150,000 | ~$0.0005 |
 | Approve | ~50,000 | ~$0.0002 |
 | Sell (Token→ETH) | ~200,000 | ~$0.0007 |
@@ -166,19 +196,18 @@ For a typical run with:
 - Sell after: 10 buys
 - Running 24 hours:
 
-**Daily Volume**: ~12 cycles × 10 buys × $6 = **$720 volume**
+**Daily Volume**: ~12 cycles × 10 buys × $6 = **$720 volume**  
 **Daily Gas Cost**: ~12 cycles × $0.006 = **~$0.07**
 
 ## 🔒 Security Checklist
 
 Before running with real funds:
 
-- [ ] Private key stored in encrypted config only
+- [ ] Private key stored in encrypted file only
 - [ ] Encryption password is strong and backed up
-- [ ] Config file has 600 permissions
+- [ ] Wallet file has 600 permissions
 - [ ] Wallet has sufficient ETH for gas
 - [ ] Dry run tested successfully
-- [ ] RPC endpoint is trusted
 - [ ] Machine is secure (no malware, firewall enabled)
 - [ ] Bot running in screen/tmux or as service
 - [ ] Logs are being written and monitored
@@ -187,14 +216,14 @@ Before running with real funds:
 
 ### "Failed to connect to RPC"
 
-- Verify RPC URL is correct and accessible
-- Check firewall settings
-- Try a different RPC endpoint
+- Bot automatically tries multiple RPC endpoints
+- Check internet connection
+- Wait a moment and retry
 
 ### "Gas price exceeds maximum"
 
 - Network may be congested
-- Increase `max_gas_price_gwei` in config
+- Increase `max_gas_gwei` in config
 - Bot will wait for gas prices to drop
 
 ### "Insufficient funds"
@@ -203,66 +232,24 @@ Before running with real funds:
 - Check you're on Base network (chainId 8453)
 - Verify buy amount is less than balance
 
-### "Transaction failed"
+### "Failed to decrypt wallet"
 
-- Check transaction on [BaseScan](https://basescan.org)
-- Verify token contract address
-- Check slippage settings
-- Review logs for detailed error
-
-## 📊 Monitoring
+- Wrong password - try again
+- Wallet file may be corrupted
+- Re-run `python bot.py setup` if needed
 
 ### View Logs
 
 ```bash
 # Tail log file
-tail -f bot.log
+tail -f volume_bot.log
 
 # View last 100 lines
-tail -n 100 bot.log
+tail -n 100 volume_bot.log
 
 # Search for errors
-grep ERROR bot.log
+grep ERROR volume_bot.log
 ```
-
-### Health Checks
-
-The bot performs automatic health checks:
-- RPC connection status
-- Node sync status
-- Gas price monitoring
-- Wallet balance checks
-
-### Metrics
-
-The bot tracks:
-- Total trades executed
-- Successful/failed trade ratio
-- Total gas spent
-- Current buy count
-- ETH and COMPUTE balances
-
-## 🧪 Testing
-
-### Dry Run Mode
-
-```bash
-# Test without spending real funds
-python bot.py run --dry-run
-```
-
-In dry run mode:
-- No transactions are sent
-- All logic is executed
-- Perfect for testing configuration
-
-### Testnet (if available)
-
-You can test on Base Sepolia before mainnet:
-
-1. Get testnet ETH from [Base Sepolia Faucet](https://www.coinbase.com/faucets/base-sepolia-faucet)
-2. Update RPC URL to Sepolia endpoint
-3. Run with small amounts
 
 ## 🚀 Deployment
 
@@ -280,7 +267,7 @@ Type=simple
 User=botuser
 WorkingDirectory=/path/to/volume_bot
 Environment="PYTHONUNBUFFERED=1"
-ExecStart=/path/to/venv/bin/python bot.py run --config /path/to/config.yaml
+ExecStart=/path/to/venv/bin/python bot.py run
 Restart=always
 RestartSec=10
 
@@ -307,11 +294,15 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY *.py ./
+COPY swarm/ ./swarm/
 
-# Don't copy config - mount it as volume
+# Don't copy config/wallet - mount as volumes
 VOLUME ["/app/config"]
 
-CMD ["python", "bot.py", "run", "--config", "/app/config/bot_config.yaml"]
+# Set working config path
+ENV CONFIG_PATH=/app/config
+
+CMD ["python", "bot.py", "run"]
 ```
 
 Build and run:
@@ -320,6 +311,8 @@ Build and run:
 docker build -t compute-bot .
 docker run -v /path/to/config:/app/config compute-bot
 ```
+
+**Note:** Place `bot_config.json` and `.bot_wallet.enc` in `/path/to/config/`
 
 ### Running with PM2
 
@@ -337,15 +330,47 @@ pm2 logs compute-bot
 pm2 monit
 ```
 
-## 📝 Environment Variables
-
-You can also configure via environment variables (useful for Docker):
+### Running with screen/tmux
 
 ```bash
-export COMPUTE_BOT_RPC_URL="https://mainnet.base.org"
-export COMPUTE_BOT_PASSWORD="your-encryption-password"
-export COMPUTE_BOT_LOG_LEVEL="INFO"
+# Using screen
+screen -S compute-bot
+python bot.py run
+# Detach: Ctrl+A, D
+
+# Reattach
+screen -r compute-bot
+
+# Using tmux
+tmux new -s compute-bot
+python bot.py run
+# Detach: Ctrl+B, D
+
+# Reattach
+tmux attach -t compute-bot
 ```
+
+## 🧪 Testing
+
+### Dry Run Mode
+
+```bash
+# Test without spending real funds
+python bot.py run --dry-run
+```
+
+In dry run mode:
+- No transactions are sent
+- All logic is executed
+- Perfect for testing configuration
+
+### Check Balances
+
+```bash
+python bot.py balance
+```
+
+Shows ETH and COMPUTE balances before running.
 
 ## ⚠️ Risk Disclaimer
 
@@ -368,16 +393,24 @@ MIT License - See LICENSE file for details
 Contributions are welcome! Please:
 
 1. Fork the repository
-2. Create a feature branch
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
 3. Make your changes
-4. Submit a pull request
+4. Commit with clear messages
+5. Push to the branch
+6. Open a Pull Request
 
 ## 📞 Support
 
 For issues and questions:
 - Open a GitHub issue
 - Check existing issues first
-- Include logs and configuration (remove sensitive data)
+- Include logs (remove sensitive data like addresses/keys)
+
+## 🔗 Links
+
+- **Repository**: https://github.com/kabbalahmonster/base-volume-bot
+- **$COMPUTE Token**: `0x696381f39F17cAD67032f5f52A4924ce84e51BA3`
+- **Base Explorer**: https://basescan.org
 
 ## 🙏 Acknowledgments
 
@@ -389,5 +422,7 @@ For issues and questions:
 ---
 
 **Happy Trading! 🚀**
+
+*Built by Clawdelia for the Cult of the Shell* 🦑
 
 *Remember: Never invest more than you can afford to lose.*

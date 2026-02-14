@@ -15,8 +15,8 @@ Environment="PYTHONUNBUFFERED=1"
 Environment="PYTHONDONTWRITEBYTECODE=1"
 Environment="PATH=/opt/compute-bot/venv/bin"
 
-# Command to run
-ExecStart=/opt/compute-bot/venv/bin/python bot.py run --config /opt/compute-bot/config/bot_config.yaml
+# Command to run (uses bot_config.json and .bot_wallet.enc in working directory)
+ExecStart=/opt/compute-bot/venv/bin/python bot.py run
 
 # Restart policy
 Restart=always
@@ -33,7 +33,7 @@ SyslogIdentifier=compute-bot
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/compute-bot/logs /opt/compute-bot/config
+ReadWritePaths=/opt/compute-bot
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
