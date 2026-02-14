@@ -1,0 +1,39 @@
+# Example Configuration File
+# Copy this to bot_config.yaml and fill in your values
+# DO NOT commit bot_config.yaml to git!
+
+# Network Configuration
+rpc_url: "https://mainnet.base.org"
+chain_id: 8453
+
+# Token Addresses (Base Mainnet)
+compute_token: "0x696381f39F17cAD67032f5f52A4924ce84e51BA3"
+weth_address: "0x4200000000000000000000000000000000000006"
+
+# Uniswap V3 Contracts
+router_address: "0x2626664c2603336E57B271c5C0b26F421741e481"
+quoter_address: "0x3d4e44Eb1374240CE5F1B871ab261CD16335CB76"
+factory_address: "0x33128a8fC17869897dcE68Ed026d694621f6FDfD"
+
+# Trading Parameters
+buy_amount_eth: 0.002              # Amount of ETH per buy
+buy_interval_seconds: 300          # Seconds between buys (300 = 5 minutes)
+sell_after_buys: 10                # Number of buys before selling all
+pool_fee: 3000                     # Uniswap V3 fee tier (3000 = 0.3%)
+
+# Gas Settings
+max_gas_price_gwei: 5.0            # Maximum acceptable gas price
+slippage_percent: 2.0              # Maximum slippage tolerance
+gas_limit_buffer: 1.2              # Gas limit multiplier (20% buffer)
+
+# Operation Settings
+dry_run: false                     # Set to true for testing (no real trades)
+log_level: "INFO"                  # DEBUG, INFO, WARNING, ERROR
+log_file: "./bot.log"              # Path to log file
+max_retries: 3                     # Max transaction retry attempts
+retry_delay_seconds: 5             # Delay between retries
+health_check_interval: 60          # Seconds between health checks
+
+# Security (filled in by 'bot.py init')
+encrypted_private_key: null
+salt: null

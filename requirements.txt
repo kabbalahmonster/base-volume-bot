@@ -1,0 +1,52 @@
+# $COMPUTE Volume Bot - Python Dependencies
+# Last updated: 2026-02-14
+# Python version: >=3.9,<3.13
+
+# ============ Core Web3 & Blockchain ============
+# Web3.py - Ethereum blockchain interaction
+web3>=6.0.0,<8.0.0
+
+# Ethereum account management
+eth-account>=0.8.0,<0.14.0
+
+# Ethereum ABI encoding/decoding
+eth-abi>=4.0.0,<6.0.0
+
+# ============ Cryptography & Security ============
+# Encryption for wallet key storage
+cryptography>=41.0.0,<45.0.0
+
+# ============ CLI & Rich Terminal Output ============
+# Rich text and beautiful formatting in terminal
+rich>=13.0.0,<14.0.0
+
+# ============ Configuration Management ============
+# Environment variable loading
+python-dotenv>=1.0.0,<2.0.0
+
+# YAML configuration file support
+pyyaml>=6.0.0,<7.0.0
+
+# ============ HTTP & Network ============
+# HTTP library for API calls
+requests>=2.31.0,<3.0.0
+
+# ============ Retry & Error Handling ============
+# Tenacity for retry logic with exponential backoff
+tenacity>=8.0.0,<10.0.0
+
+# ============ Development & Testing (Optional) ============
+# Uncomment for development:
+# pytest>=7.0.0
+# pytest-asyncio>=0.21.0
+# black>=23.0.0
+# flake8>=6.0.0
+# mypy>=1.0.0
+
+# ============ Notes ============
+# All packages are compatible with Python 3.9 - 3.12
+# Upper bounds prevent breaking changes from major version updates
+# For production, consider pinning exact versions:
+#   web3==6.15.1
+#   eth-account==0.11.0
+#   cryptography==42.0.0
