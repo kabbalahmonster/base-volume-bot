@@ -334,8 +334,10 @@ class MultiDEXRouter:
         self.token = w3.eth.contract(address=self.token_address, abi=ERC20_ABI)
         self.token_decimals = self.token.functions.decimals().call()
         
-        # Track best DEX
+        # Track best DEX and fee
         self.best_dex = None
+        self.best_fee = None  # Store fee for V3 swaps
+        self.best_pool = None  # Store pool address
         self._find_best_dex()
     
     def _find_best_dex(self):
@@ -359,12 +361,16 @@ class MultiDEXRouter:
                         pool_address = factory.functions.getPool(self.weth, self.token_address, fee).call()
                         if pool_address and pool_address != "0x0000000000000000000000000000000000000000":
                             # Pool exists - check if it has liquidity
-                            pool_code = self.w3.eth.get_code(pool_address)
-                            if len(pool_code) > 0:
-                                best_dex = "uniswap_v3"
-                                best_liquidity = 1  # Found a pool
-                                print(f"[green]✓ Uniswap V3 pool found (fee={fee})[/green]")
-                                break
+                            pool = self.w3.eth.contract(address=pool_address, abi=UNISWAP_V3_POOL_ABI)
+                            liquidity = pool.functions.liquidity().call()
+                            if liquidity > 0:
+                                # Found a pool with liquidity
+                                if liquidity > best_liquidity:
+                                    best_dex = "uniswap_v3"
+                                    best_liquidity = liquidity
+                                    self.best_fee = fee
+                                    self.best_pool = pool_address
+                                    print(f"[green]✓ Uniswap V3 pool found (fee={fee}, liq={liquidity})[/green]")
                     except:
                         continue
             except Exception as e:
@@ -491,36 +497,14 @@ class MultiDEXRouter:
                     return False, f"V2 swap failed (status={receipt['status']}) - TX: {tx_hex}"
 
             elif dex_config["type"] == "uniswap_v3":
-                # V3 swap - find pool with best liquidity
-                factory = self.w3.eth.contract(
-                    address=self.w3.to_checksum_address(DEX_CONFIG["uniswap_v3"]["factory"]),
-                    abi=UNISWAP_V3_FACTORY_ABI
-                )
+                # V3 swap - use the fee and pool found during discovery
+                if not self.best_fee or not self.best_pool:
+                    return False, "V3 fee/pool not set - discovery failed"
                 
-                best_pool = None
-                best_fee = None
-                best_liquidity = 0
-                
-                # Find pool with highest liquidity
-                for fee in DEX_CONFIG["uniswap_v3"]["fee_tiers"]:
-                    try:
-                        pool_address = factory.functions.getPool(self.weth, self.token_address, fee).call()
-                        if pool_address and pool_address != "0x0000000000000000000000000000000000000000":
-                            pool = self.w3.eth.contract(address=pool_address, abi=UNISWAP_V3_POOL_ABI)
-                            liquidity = pool.functions.liquidity().call()
-                            if liquidity > best_liquidity:
-                                best_liquidity = liquidity
-                                best_pool = pool_address
-                                best_fee = fee
-                    except:
-                        continue
-                
-                if not best_pool:
-                    return False, "No Uniswap V3 pool found with liquidity"
+                print(f"[dim]Using V3 pool: {self.best_pool[:20]}... with fee={self.best_fee}[/dim]")
                 
                 # For V3, we need to estimate output
                 # Using a simplified approach - in production use QuoterV2
-                # Assume 0.5% slippage for min amount
                 min_out = 0  # Would use proper quoting in production
                 
                 deadline = int(self.w3.eth.get_block('latest')['timestamp']) + 300
@@ -529,7 +513,7 @@ class MultiDEXRouter:
                 tx = router.functions.exactInputSingle({
                     'tokenIn': self.weth,
                     'tokenOut': self.token_address,
-                    'fee': best_fee,
+                    'fee': self.best_fee,
                     'recipient': self.account.address,
                     'deadline': deadline,
                     'amountIn': amount_in_wei,
@@ -645,25 +629,11 @@ class MultiDEXRouter:
                     abi=UNISWAP_V3_FACTORY_ABI
                 )
                 
-                best_pool = None
-                best_fee = None
-                best_liquidity = 0
+                # Use the fee and pool found during discovery
+                if not self.best_fee or not self.best_pool:
+                    return False, "V3 fee/pool not set - discovery failed"
                 
-                for fee in DEX_CONFIG["uniswap_v3"]["fee_tiers"]:
-                    try:
-                        pool_address = factory.functions.getPool(self.token_address, self.weth, fee).call()
-                        if pool_address and pool_address != "0x0000000000000000000000000000000000000000":
-                            pool = self.w3.eth.contract(address=pool_address, abi=UNISWAP_V3_POOL_ABI)
-                            liquidity = pool.functions.liquidity().call()
-                            if liquidity > best_liquidity:
-                                best_liquidity = liquidity
-                                best_pool = pool_address
-                                best_fee = fee
-                    except:
-                        continue
-                
-                if not best_pool:
-                    return False, "No Uniswap V3 pool found with liquidity"
+                print(f"[dim]Using V3 pool for sell: {self.best_pool[:20]}... with fee={self.best_fee}[/dim]")
                 
                 # Approve router
                 approve_tx = self.token.functions.approve(
@@ -685,7 +655,7 @@ class MultiDEXRouter:
                 tx = router.functions.exactInputSingle({
                     'tokenIn': self.token_address,
                     'tokenOut': self.weth,
-                    'fee': best_fee,
+                    'fee': self.best_fee,
                     'recipient': self.account.address,
                     'deadline': deadline,
                     'amountIn': amount_in_units,
