@@ -37,6 +37,7 @@ from rich.logging import RichHandler
 from wallet import SecureKeyManager, SecureWallet
 from oneinch_router import OneInchAggregator
 from dex_router import MultiDEXRouter
+from zerox_router import ZeroXAggregator
 
 # Constants
 COMPUTE_TOKEN = "0x696381f39F17cAD67032f5f52A4924ce84e51BA3"
@@ -304,8 +305,27 @@ class VolumeBot:
                 console.print(f"[red]✗ Insufficient ETH balance[/red]")
                 return False
             
-            # Try 1inch first if API key is configured, otherwise use multi-DEX router directly
+            # Try 0x first if API key is configured, then 1inch, then multi-DEX
+            use_zerox = hasattr(self.config, 'zerox_api_key') and self.config.zerox_api_key
             use_oneinch = hasattr(self.config, 'oneinch_api_key') and self.config.oneinch_api_key
+            
+            if use_zerox:
+                console.print(f"[dim]Swapping {amount_eth} ETH for ${self.token_symbol} via 0x...[/dim]")
+                zerox = ZeroXAggregator(self.w3, self.account, self.config.zerox_api_key)
+                success, result = zerox.swap_eth_for_tokens(
+                    self.token_address,
+                    amount_eth,
+                    slippage_percent=self.config.slippage_percent
+                )
+                if not success:
+                    console.print(f"[yellow]⚠ 0x failed: {result}[/yellow]")
+                    console.print(f"[dim]Falling back...[/dim]")
+                else:
+                    console.print(f"[green]✓ Buy successful via 0x![/green]")
+                    console.print(f"[dim]  TX: {result[:20]}...[/dim]")
+                    self.successful_buys += 1
+                    self.total_bought_eth += amount_eth
+                    return True
             
             if use_oneinch:
                 console.print(f"[dim]Swapping {amount_eth} ETH for ${self.token_symbol} via 1inch...[/dim]")
@@ -325,7 +345,7 @@ class VolumeBot:
                     return True
             
             # Use multi-DEX router (direct swap)
-            if not use_oneinch or not success:
+            if (not use_zerox and not use_oneinch) or not success:
                 console.print(f"[dim]Swapping {amount_eth} ETH for ${self.token_symbol} via multi-DEX router...[/dim]")
                 success, result = self.dex_router.swap_eth_for_tokens(
                     amount_eth,

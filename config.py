@@ -68,6 +68,9 @@ class Config:
     # 1inch API (optional - if not set, uses direct DEX routing)
     oneinch_api_key: Optional[str] = None
     
+    # 0x API (optional - preferred for V4 support)
+    zerox_api_key: Optional[str] = None
+    
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary (excluding sensitive data)."""
         return asdict(self)
