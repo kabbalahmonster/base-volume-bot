@@ -31,7 +31,7 @@ DEX_CONFIG = {
     },
     "aerodrome": {
         "name": "Aerodrome",
-        "router": "0xcF77a3Ba9A73CA43934ef2c5c9864A4c7B4bE323",
+        "router": "0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43",
         "factory": "0x420DD381b31aEf6683db6B902084cB0FFECe40Da",
         "type": "solidly",  # Solidly-style DEX
         "fee_tiers": [100, 500, 3000, 10000],  # Not used for Solidly, but kept for compatibility
@@ -550,6 +550,19 @@ class MultiDEXRouter:
                     'nonce': self.w3.eth.get_transaction_count(self.account.address),
                     'chainId': 8453
                 })
+                
+                # Sign and send
+                signed = self.account.sign_transaction(tx)
+                tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+                
+                # Wait for receipt
+                receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+                tx_hex = self.w3.to_hex(tx_hash)
+
+                if receipt['status'] == 1:
+                    return True, tx_hex
+                else:
+                    return False, f"Aerodrome swap failed (status={receipt['status']}) - TX: {tx_hex}"
                 
             elif dex_config["type"] == "uniswap_v2":
                 # V2-style swap
