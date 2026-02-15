@@ -1062,6 +1062,8 @@ def simulate_command(token_address: str = COMPUTE_TOKEN, amount: float = 0.0005,
     3. Optionally runs eth_call to check for revert
     
     Use this to verify the transaction will deliver tokens before spending ETH.
+    
+    NOTE: Uses real wallet address for simulation (needs ETH for gas estimation).
     """
     console.print("\n[bold cyan]🔬 V4 Transaction Simulator[/bold cyan]")
     console.print("[dim]Building transaction without sending...[/dim]\n")
@@ -1077,8 +1079,19 @@ def simulate_command(token_address: str = COMPUTE_TOKEN, amount: float = 0.0005,
         console.print(f"[red]Missing dependency: {e}[/red]")
         return
     
+    # Get password and load real wallet (needed for gas estimation)
+    console.print("[yellow]Enter wallet password (for simulation address):[/yellow]")
+    password = getpass.getpass("> ")
+    
+    key_manager = SecureKeyManager()
+    private_key = key_manager.load_and_decrypt(password)
+    
+    if not private_key:
+        console.print("[red]Failed to decrypt wallet. Wrong password?[/red]")
+        return
+    
     # Setup - connect to RPC first (needed for RouterCodec)
-    console.print("[dim]Connecting to Base network...[/dim]")
+    console.print("\n[dim]Connecting to Base network...[/dim]")
     w3 = None
     for rpc_url in RPC_URLS.get("base", ["https://mainnet.base.org"]):
         try:
@@ -1093,8 +1106,8 @@ def simulate_command(token_address: str = COMPUTE_TOKEN, amount: float = 0.0005,
         console.print("[red]✗ Failed to connect to any RPC[/red]")
         return
     
-    # Use a dummy account for simulation (doesn't need funds)
-    dummy_account = Account.create()
+    # Use REAL wallet account (has ETH for gas estimation)
+    real_account = Account.from_key(private_key)
     
     # Build the swap (same as live)
     token_address = w3.to_checksum_address(token_address)
@@ -1104,6 +1117,7 @@ def simulate_command(token_address: str = COMPUTE_TOKEN, amount: float = 0.0005,
     console.print(f"[dim]Simulating swap:[/dim]")
     console.print(f"  Token: {token_address}")
     console.print(f"  Amount: {amount_eth} ETH ({amount_in_wei} wei)")
+    console.print(f"  Sender: {real_account.address}")
     console.print()
     
     # Try to build the transaction
@@ -1142,7 +1156,7 @@ def simulate_command(token_address: str = COMPUTE_TOKEN, amount: float = 0.0005,
             hook_data=b''
         )
         # Take output
-        v4_swap.take(currency=token_address, recipient=dummy_account.address, amount=1)
+        v4_swap.take(currency=token_address, recipient=real_account.address, amount=1)
         
         # Build v4 swap
         chain = v4_swap.build_v4_swap()
@@ -1150,7 +1164,7 @@ def simulate_command(token_address: str = COMPUTE_TOKEN, amount: float = 0.0005,
         # Build transaction
         base_ur = w3.to_checksum_address(UNIVERSAL_ROUTER)
         tx = chain.build_transaction(
-            sender=dummy_account.address,
+            sender=real_account.address,
             value=amount_in_wei,
             deadline=int(time.time()) + 300,
             ur_address=base_ur
@@ -1206,7 +1220,7 @@ def simulate_command(token_address: str = COMPUTE_TOKEN, amount: float = 0.0005,
                     'to': tx['to'],
                     'data': tx['data'],
                     'value': tx['value'],
-                    'from': dummy_account.address
+                    'from': real_account.address
                 })
                 console.print("[green]✓ eth_call succeeded (no revert)[/green]")
                 console.print(f"[dim]Result: {result.hex()[:50]}...[/dim]")
