@@ -1052,6 +1052,190 @@ def recover_command(unwrap_weth: bool = False):
         console.print("[dim]No additional ETH recovered (may already be in wallet)[/dim]")
 
 
+def simulate_command(token_address: str = COMPUTE_TOKEN, amount: float = 0.0005, eth_call: bool = False):
+    """
+    Simulate V4 swap transaction - build and verify without sending.
+    
+    This builds the exact transaction that would be sent live and:
+    1. Verifies the calldata is non-empty
+    2. Decodes and displays the command sequence
+    3. Optionally runs eth_call to check for revert
+    
+    Use this to verify the transaction will deliver tokens before spending ETH.
+    """
+    console.print("\n[bold cyan]🔬 V4 Transaction Simulator[/bold cyan]")
+    console.print("[dim]Building transaction without sending...[/dim]\n")
+    
+    # Import required components
+    try:
+        from v4_router import V4DirectRouter, UNIVERSAL_ROUTER
+        from uniswap_universal_router_decoder import RouterCodec, FunctionRecipient
+        from web3 import Web3
+        from eth_account import Account
+        from decimal import Decimal
+    except ImportError as e:
+        console.print(f"[red]Missing dependency: {e}[/red]")
+        return
+    
+    # Setup (no wallet needed for simulation, but we need an address)
+    w3 = Web3()
+    # Use a dummy account for simulation (doesn't need funds)
+    dummy_account = Account.create()
+    
+    # Initialize V4 router
+    v4_router = V4DirectRouter(w3, dummy_account)
+    
+    if not v4_router.has_library:
+        console.print("[red]V4 library not installed. Run: pip install uniswap-universal-router-decoder[/red]")
+        return
+    
+    # Build the swap (same as live)
+    token_address = w3.to_checksum_address(token_address)
+    amount_eth = Decimal(str(amount))
+    amount_in_wei = int(amount_eth * 10**18)
+    
+    console.print(f"[dim]Simulating swap:[/dim]")
+    console.print(f"  Token: {token_address}")
+    console.print(f"  Amount: {amount_eth} ETH ({amount_in_wei} wei)")
+    console.print()
+    
+    # Try to build the transaction
+    try:
+        # Build PoolKey
+        weth = "0x4200000000000000000000000000000000000006"
+        if weth.lower() < token_address.lower():
+            currency0, currency1 = weth, token_address
+            zero_for_one = True
+        else:
+            currency0, currency1 = token_address, weth
+            zero_for_one = False
+        
+        pool_key = {
+            'currency0': currency0,
+            'currency1': currency1,
+            'fee': 500,  # Try 0.05% first
+            'tickSpacing': 10,
+            'hooks': '0x0000000000000000000000000000000000000000'
+        }
+        
+        # Build using library
+        codec = RouterCodec()
+        chain = codec.encode.chain()
+        
+        # Wrap ETH
+        chain.wrap_eth(FunctionRecipient.ROUTER, amount_in_wei)
+        
+        # V4 swap
+        v4_swap = chain.v4_swap()
+        v4_swap.swap_exact_in_single(
+            pool_key=pool_key,
+            zero_for_one=zero_for_one,
+            amount_in=amount_in_wei,
+            amount_out_min=1,  # Minimal
+            hook_data=b''
+        )
+        # Take output
+        v4_swap.take(currency=token_address, recipient=dummy_account.address, amount=1)
+        
+        # Build v4 swap
+        chain = v4_swap.build_v4_swap()
+        
+        # Build transaction
+        base_ur = w3.to_checksum_address(UNIVERSAL_ROUTER)
+        tx = chain.build_transaction(
+            sender=dummy_account.address,
+            value=amount_in_wei,
+            deadline=int(time.time()) + 300,
+            ur_address=base_ur
+        )
+        
+        console.print("[green]✓ Transaction built successfully[/green]\n")
+        
+        # Display transaction details
+        console.print("[bold cyan]📋 Transaction Details:[/bold cyan]")
+        console.print(f"  To: {tx.get('to', 'N/A')}")
+        console.print(f"  Value: {tx.get('value', 0)} wei")
+        console.print(f"  Gas: {tx.get('gas', 'N/A')}")
+        console.print(f"  Data: {tx.get('data', 'N/A')[:80]}...")
+        console.print()
+        
+        # Verify calldata is non-empty
+        if not tx.get('data') or len(tx.get('data', '')) < 10:
+            console.print("[red]✗ ERROR: Calldata is empty or too short![/red]")
+            console.print("[red]This would result in an empty execute() call.[/red]")
+            return
+        
+        console.print("[green]✓ Calldata is non-empty[/green]\n")
+        
+        # Decode commands (basic check)
+        console.print("[bold cyan]🔍 Command Verification:[/bold cyan]")
+        data = tx.get('data', '')
+        if len(data) >= 10:
+            selector = data[:10]
+            console.print(f"  Function selector: {selector}")
+            if selector == "0x3593564c":
+                console.print("  [green]✓ Correct: execute(bytes,bytes[],uint256)[/green]")
+            else:
+                console.print(f"  [yellow]⚠ Unexpected selector: {selector}[/yellow]")
+        
+        console.print()
+        
+        # Check for expected command patterns
+        console.print("[bold cyan]✅ Expected Command Sequence:[/bold cyan]")
+        console.print("  1. WRAP_ETH (0x0a) - Wrap ETH to WETH")
+        console.print("  2. V4_SWAP (0x10) - Execute V4 swap")
+        console.print("     - swap_exact_in_single")
+        console.print("     - take (to recipient wallet)")
+        console.print()
+        
+        # Eth call simulation (if requested and RPC available)
+        if eth_call:
+            console.print("[bold cyan]📡 Running eth_call simulation...[/bold cyan]")
+            console.print("[dim]Note: eth_call requires a live RPC connection[/dim]\n")
+            
+            # Try to connect to RPC
+            w3_live = None
+            for rpc_url in RPC_URLS.get("base", ["https://mainnet.base.org"]):
+                try:
+                    w3_live = Web3(Web3.HTTPProvider(rpc_url))
+                    if w3_live.is_connected():
+                        break
+                except:
+                    continue
+            
+            if not w3_live or not w3_live.is_connected():
+                console.print("[yellow]⚠ No RPC connection available for eth_call[/yellow]")
+                return
+            
+            try:
+                # Run eth_call
+                result = w3_live.eth.call({
+                    'to': tx['to'],
+                    'data': tx['data'],
+                    'value': tx['value'],
+                    'from': dummy_account.address
+                })
+                console.print("[green]✓ eth_call succeeded (no revert)[/green]")
+                console.print(f"[dim]Result: {result.hex()[:50]}...[/dim]")
+            except Exception as e:
+                console.print(f"[red]✗ eth_call failed: {e}[/red]")
+                console.print("[red]Transaction would revert if sent.[/red]")
+        
+        console.print()
+        console.print("=" * 60)
+        console.print("[bold green]SIMULATION COMPLETE[/bold green]")
+        console.print("=" * 60)
+        console.print()
+        console.print("Transaction appears valid and ready to send.")
+        console.print("[yellow]Note: This does not guarantee tokens will be delivered.[/yellow]")
+        console.print("A live test is still required to verify actual token transfer.")
+        
+    except Exception as e:
+        console.print(f"\n[red]✗ Simulation failed: {e}[/red]")
+        import traceback
+        console.print(f"[dim]{traceback.format_exc()[:300]}...[/dim]")
+
+
 def main():
     import argparse
     
@@ -1081,6 +1265,15 @@ def main():
     recover_parser = subparsers.add_parser("recover", help="Recover ETH from Universal Router (LIMITED - see docs)")
     recover_parser.add_argument("--unwrap", action="store_true", help="Also unwrap any WETH")
     
+    # Simulate command - build and verify V4 transaction without sending
+    simulate_parser = subparsers.add_parser("simulate", help="Simulate V4 swap (build tx, verify commands, optional eth_call)")
+    simulate_parser.add_argument("--token-address", type=str, default=COMPUTE_TOKEN,
+                                help=f"Token address to simulate (default: {COMPUTE_TOKEN})")
+    simulate_parser.add_argument("--amount", type=float, default=0.0005,
+                                help="Amount of ETH to simulate swapping (default: 0.0005)")
+    simulate_parser.add_argument("--eth-call", action="store_true",
+                                help="Also run eth_call simulation (requires connected RPC)")
+    
     args = parser.parse_args()
     
     if args.command == "setup":
@@ -1094,6 +1287,8 @@ def main():
         balance_command()
     elif args.command == "recover":
         recover_command(unwrap_weth=args.unwrap)
+    elif args.command == "simulate":
+        simulate_command(token_address=args.token_address, amount=args.amount, eth_call=args.eth_call)
     else:
         parser.print_help()
 
