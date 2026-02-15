@@ -298,38 +298,33 @@ class V4DirectRouter:
         
         try:
             # Build command sequence for V4 swap
-            commands = bytes([Commands.WRAP_ETH, Commands.V4_SWAP_EXACT_IN, Commands.CLOSE_DELTA, Commands.TAKE, Commands.SWEEP])
+            # Try simpler sequence: WRAP -> SWAP -> SETTLE (output) -> SWEEP (input remainder)
+            commands = bytes([Commands.WRAP_ETH, Commands.V4_SWAP_EXACT_IN, Commands.SETTLE, Commands.SWEEP])
             
             inputs = []
             
-            # Command 1: WRAP_ETH
+            # Command 1: WRAP_ETH - wrap ETH to WETH held by router
             wrap_input = encode(
                 ['address', 'uint256'],
                 [self.router_address, amount_in_wei]
             )
             inputs.append(wrap_input)
             
-            # Command 2: V4_SWAP_EXACT_IN
+            # Command 2: V4_SWAP_EXACT_IN - swap WETH for output token
             swap_input = self._encode_v4_swap_exact_in(
                 pool_key, amount_in_wei, min_amount_out, zero_for_one
             )
             inputs.append(swap_input)
             
-            # Command 3: CLOSE_DELTA - settle any open deltas before taking
-            close_delta_input = encode(
-                ['address'],
-                [token_address]
+            # Command 3: SETTLE - settle the output token delta (receive tokens)
+            # SETTLE params: (token, amount, isInput)
+            # isInput=false means we're receiving (settling a positive delta)
+            uint256_max = (1 << 256) - 1
+            settle_input = encode(
+                ['address', 'uint256', 'bool'],
+                [token_address, uint256_max, False]  # Take all output, isInput=false
             )
-            inputs.append(close_delta_input)
-            
-            # Command 4: TAKE - take output tokens
-            # Use uint128.max (2^128 - 1) to mean "take all available"
-            uint128_max = (1 << 128) - 1
-            take_input = encode(
-                ['address', 'address', 'uint128'],
-                [token_address, self.account.address, uint128_max]
-            )
-            inputs.append(take_input)
+            inputs.append(settle_input)
             
             # Command 5: SWEEP - sweep any remaining WETH
             # Use uint160.max (2^160 - 1) to mean "sweep all"
