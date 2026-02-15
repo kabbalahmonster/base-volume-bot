@@ -218,8 +218,13 @@ class V4UniversalRouter:
         
         pool_manager = self.w3.eth.contract(address=self.pool_manager, abi=V4_POOL_MANAGER_ABI)
         
-        token0, token1 = sorted([token_in.lower(), token_out.lower()])
-        zero_for_one = token_in.lower() == token0
+        # Ensure addresses are checksummed
+        token_in_cs = self.w3.to_checksum_address(token_in)
+        token_out_cs = self.w3.to_checksum_address(token_out)
+        
+        # Sort for currency0/currency1 ordering
+        token0, token1 = sorted([token_in_cs, token_out_cs])
+        zero_for_one = token_in_cs == token0
         
         for fee in fee_tiers:
             try:
@@ -281,9 +286,12 @@ class V4UniversalRouter:
         
         try:
             quoter = self.w3.eth.contract(address=quoter_address, abi=quoter_abi)
+            # Ensure checksum addresses
+            token_in_cs = self.w3.to_checksum_address(token_in)
+            token_out_cs = self.w3.to_checksum_address(token_out)
             amount_out = quoter.functions.quoteExactInputSingle(
-                token_in,
-                token_out,
+                token_in_cs,
+                token_out_cs,
                 fee,
                 amount_in,
                 0
