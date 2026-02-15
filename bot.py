@@ -323,7 +323,7 @@ class VolumeBot:
                         
                         # Import library components
                         from uniswap_universal_router_decoder import RouterCodec
-                        codec = RouterCodec()
+                        codec = RouterCodec(w3=self.w3)
                         
                         # Try to build chain
                         chain = codec.encode.chain()

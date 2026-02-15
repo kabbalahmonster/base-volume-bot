@@ -66,7 +66,7 @@ class V4DirectRouter:
         # Try to import the library
         try:
             from uniswap_universal_router_decoder import RouterCodec, FunctionRecipient
-            self.codec = RouterCodec()
+            self.codec = RouterCodec(w3=w3)
             self.FunctionRecipient = FunctionRecipient
             self.has_library = True
             print("[green]✓ uniswap-universal-router-decoder library loaded[/green]")
