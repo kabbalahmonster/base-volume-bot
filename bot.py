@@ -615,7 +615,7 @@ class VolumeBot:
 def setup_command():
     """Interactive setup - generates new wallet automatically"""
     console.print(Panel.fit(
-        "[bold cyan]$COMPUTE Volume Bot - Setup[/bold cyan]\n"
+        "[bold cyan]Volume Bot - Setup[/bold cyan]\n"
         "[dim]Auto-Generated Wallet Mode[/dim]",
         box=box.DOUBLE
     ))
@@ -804,7 +804,7 @@ def balance_command():
 def main():
     import argparse
     
-    parser = argparse.ArgumentParser(description="$COMPUTE Volume Bot")
+    parser = argparse.ArgumentParser(description="Volume Bot for Base Network")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
     
     # Setup command
