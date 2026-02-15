@@ -11,9 +11,12 @@ A production-ready, secure Python trading bot for generating volume on $COMPUTE 
 - **🔐 Secure**: Private key encryption with PBKDF2-HMAC-SHA256 (600k iterations)
 - **⛽ Gas Optimized**: Dynamic gas pricing with configurable limits
 - **🔄 Multi-DEX**: 0x (✅ primary), Uniswap V3 (✅ fallback), V4 (⚠️ experimental)
+- **💱 Flexible Pairs**: Trade any token pair (ETH/Token, Token/Token)
+- **🔄 Cycle Management**: Run X cycles or continuous, configurable buys per cycle
+- **💰 Liquidate**: One-command sell all tokens
 - **📊 Rich CLI**: Beautiful terminal UI with progress bars and tables
 - **🧪 Dry Run Mode**: Test without spending real funds
-- **💰 Withdraw**: Built-in withdrawal to external wallets
+- **💸 Withdraw**: Built-in withdrawal to external wallets
 - **🛡️ Slippage Protection**: Configurable slippage tolerance
 - **📝 Comprehensive Logging**: File and console logging
 
@@ -97,14 +100,21 @@ Edit `bot_config.json` to customize:
 ```json
 {
   "chain": "base",
-  "buy_amount_eth": 0.002,
+  "base_token": "ETH",
+  "quote_token": "0x696381f39F17cAD67032f5f52A4924ce84e51BA3",
+  "buy_amount": 0.002,
+  "buy_amount_is_eth": true,
+  "max_cycles": null,
+  "buys_per_cycle": 10,
   "buy_interval_minutes": 5,
-  "sell_after_buys": 10,
+  "auto_sell": true,
   "slippage_percent": 2.0,
   "max_gas_gwei": 0.5,
   "min_eth_balance": 0.01,
   "dry_run": false,
-  "log_level": "INFO"
+  "log_level": "INFO",
+  "router_type": "0x",
+  "zerox_api_key": null
 }
 ```
 
@@ -114,19 +124,37 @@ Edit `bot_config.json` to customize:
 # Test in dry-run mode first
 python bot.py run --dry-run
 
-# Run live
+# Run live (uses 0x by default)
 python bot.py run
+
+# Use specific router
+python bot.py run --router 0x
+python bot.py run --router v3
+
+# Trade different token
+python bot.py run --token-address 0xYourTokenAddress
 ```
 
 ## 📖 Commands
 
-| Command | Description |
-|---------|-------------|
-| `setup` | Initialize encrypted wallet and config |
-| `run` | Start the trading bot |
-| `run --dry-run` | Test mode (no real transactions) |
-| `balance` | Display wallet balances |
-| `withdraw <address>` | Withdraw funds to external wallet |
+| Command | Description | Example |
+|---------|-------------|---------|
+| `setup` | Initialize encrypted wallet and config | `python bot.py setup` |
+| `run` | Start the trading bot | `python bot.py run` |
+| `run --dry-run` | Test mode (no real transactions) | `python bot.py run --dry-run` |
+| `balance` | Display wallet balances | `python bot.py balance` |
+| `liquidate` | Sell all tokens for ETH | `python bot.py liquidate` |
+| `withdraw <address>` | Withdraw funds to external wallet | `python bot.py withdraw 0xAddress` |
+
+### Liquidate Example
+
+```bash
+# Sell all tokens for ETH instantly
+python bot.py liquidate
+
+# Liquidate with specific router
+python bot.py liquidate --router 0x --token-address 0xYourToken
+```
 
 ### Withdraw Examples
 
@@ -137,36 +165,52 @@ python bot.py withdraw 0xYourAddress --amount 0.5
 # Withdraw all ETH (keeps 0.01 for gas)
 python bot.py withdraw 0xYourAddress
 
-# Withdraw ETH and all COMPUTE tokens
+# Withdraw ETH and all tokens
 python bot.py withdraw 0xYourAddress --compute
 ```
 
 ## ⚙️ Configuration
 
-### Default Settings (bot_config.json)
+### Full Configuration Options
 
+| Setting | Description | Default | Options |
+|---------|-------------|---------|---------|
+| `base_token` | Token to spend (sell) | `"ETH"` | `"ETH"` or token address |
+| `quote_token` | Token to buy | `COMPUTE address` | Any token address |
+| `buy_amount` | Amount per buy | `0.002` | Any decimal |
+| `max_cycles` | Stop after N cycles | `null` | Number or `null` (infinite) |
+| `buys_per_cycle` | Buys before selling | `10` | Any integer |
+| `auto_sell` | Sell after cycle | `true` | `true`/`false` |
+| `buy_interval_minutes` | Minutes between buys | `5` | Any integer |
+| `slippage_percent` | Max slippage | `2.0` | 0.1-100 |
+| `router_type` | DEX router | `"0x"` | `"0x"`, `"v3"`, `"v4"` |
+| `zerox_api_key` | Optional API key | `null` | Your 0x key |
+
+### Token Pair Examples
+
+**ETH → COMPUTE (default):**
 ```json
 {
-  "chain": "base",
-  "buy_amount_eth": 0.002,
-  "buy_interval_minutes": 5,
-  "sell_after_buys": 10,
-  "slippage_percent": 2.0,
-  "max_gas_gwei": 0.5,
-  "min_eth_balance": 0.01,
-  "dry_run": false,
-  "log_level": "INFO"
+  "base_token": "ETH",
+  "quote_token": "0x696381f39F17cAD67032f5f52A4924ce84e51BA3"
 }
 ```
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `buy_amount_eth` | Amount of ETH per buy | 0.002 (~$6) |
-| `buy_interval_minutes` | Minutes between buys | 5 |
-| `sell_after_buys` | Sell after N buys | 10 |
-| `slippage_percent` | Max slippage tolerance | 2.0% |
-| `max_gas_gwei` | Max gas price in Gwei | 0.5 |
-| `min_eth_balance` | Minimum ETH to keep | 0.01 |
+**USDC → COMPUTE:**
+```json
+{
+  "base_token": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  "quote_token": "0x696381f39F17cAD67032f5f52A4924ce84e51BA3"
+}
+```
+
+**ETH → Any Token:**
+```json
+{
+  "base_token": "ETH",
+  "quote_token": "0xYourTokenAddress"
+}
+```
 
 ### Security Notes
 
