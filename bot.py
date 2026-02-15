@@ -161,6 +161,7 @@ class BotConfig:
     dry_run: bool = False
     log_level: str = "INFO"
     router_type: str = "0x"  # 0x (primary), v3 (fallback), or v4 (experimental)
+    zerox_api_key: Optional[str] = None  # Optional 0x API key for higher rate limits
     
     def to_dict(self) -> Dict:
         return asdict(self)
@@ -235,7 +236,8 @@ class VolumeBot:
         
         if router_type == "0x":
             from zerox_router import ZeroXAggregator
-            self.zerox = ZeroXAggregator(self.w3, self.account)
+            api_key = getattr(self.config, 'zerox_api_key', None)
+            self.zerox = ZeroXAggregator(self.w3, self.account, api_key=api_key)
             self.dex_router = None
             self.oneinch = None
         elif router_type == "v4":
