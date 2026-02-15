@@ -160,7 +160,7 @@ class BotConfig:
     min_eth_balance: float = 0.001
     dry_run: bool = False
     log_level: str = "INFO"
-    router_type: str = "v3"  # v3, 0x, or v4
+    router_type: str = "0x"  # 0x (primary), v3 (fallback), or v4 (experimental)
     
     def to_dict(self) -> Dict:
         return asdict(self)
@@ -880,8 +880,8 @@ def main():
     run_parser.add_argument("--dry-run", action="store_true", help="Simulation mode")
     run_parser.add_argument("--token-address", type=str, default=COMPUTE_TOKEN, 
                            help=f"Token address to trade (default: {COMPUTE_TOKEN})")
-    run_parser.add_argument("--router", type=str, default="v3", choices=["v3", "0x", "v4"],
-                           help="DEX router to use (default: v3)")
+    run_parser.add_argument("--router", type=str, default="0x", choices=["0x", "v3", "v4"],
+                           help="DEX router to use (default: 0x)")
     
     # Withdraw command
     withdraw_parser = subparsers.add_parser("withdraw", help="Withdraw funds")
