@@ -1191,9 +1191,10 @@ def simulate_command(token_address: str = COMPUTE_TOKEN, amount: float = 0.0005,
         
         # Use library decoder to verify commands
         try:
-            decoded = codec.decode(tx['data'])
+            decoded = codec.decode.function_input(tx['data'])
             console.print("[bold cyan]🔍 Library Decoded Commands:[/bold cyan]")
-            console.print(f"  {decoded}")
+            console.print(f"  Function: {decoded[0]}")
+            console.print(f"  Commands: {decoded[1]}")
             console.print()
         except Exception as e:
             console.print(f"[dim]Could not decode: {e}[/dim]")
