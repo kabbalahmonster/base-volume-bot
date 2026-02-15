@@ -27,9 +27,6 @@ UNIVERSAL_ROUTER = "0x6c083a36f731ea994739ef5e8647d18553d41f76"
 # WETH on Base
 WETH = "0x4200000000000000000000000000000000000006"
 
-# V4 Pool Manager
-V4_POOL_MANAGER = "0x498581ff718922c3f8e6a244956af099b2652b2b"
-
 # ERC20 ABI (minimal)
 ERC20_ABI = [
     {"constant": True, "inputs": [], "name": "decimals", "outputs": [{"name": "", "type": "uint8"}], "type": "function"},
@@ -46,6 +43,8 @@ class TransactionError(Exception):
 class V4DirectRouter:
     """
     Direct Uniswap V4 router using uniswap-universal-router-decoder library.
+    
+    Uses the library's encode.chain() API for building swap transactions.
     """
     
     def __init__(self, w3: Web3, account: Account, max_retries: int = 3, 
@@ -66,18 +65,37 @@ class V4DirectRouter:
         
         # Try to import the library
         try:
-            from uniswap_universal_router_decoder import RouterCodec, FunctionRecipient
+            from uniswap_universal_router_decoder import RouterCodec, FunctionRecipient, Wei
             self.codec = RouterCodec()
             self.FunctionRecipient = FunctionRecipient
+            self.Wei = Wei
             self.has_library = True
             print("[green]✓ uniswap-universal-router-decoder library loaded[/green]")
-        except ImportError:
+        except ImportError as e:
             self.has_library = False
-            print("[yellow]⚠ uniswap-universal-router-decoder not installed. Run: pip install uniswap-universal-router-decoder[/yellow]")
+            print(f"[yellow]⚠ uniswap-universal-router-decoder not installed: {e}[/yellow]")
     
     def _calculate_min_amount_out(self, expected_amount: int, slippage_percent: float) -> int:
         """Calculate minimum output with slippage protection."""
         return int(expected_amount * (100 - slippage_percent) / 100)
+    
+    def _build_v4_pool_key(self, token_a: str, token_b: str, fee: int) -> Dict:
+        """Build V4 PoolKey struct."""
+        # Sort currencies for V4 (currency0 < currency1)
+        if token_a.lower() < token_b.lower():
+            currency0, currency1 = token_a, token_b
+        else:
+            currency0, currency1 = token_b, token_a
+        
+        tick_spacing = {100: 1, 500: 10, 3000: 60, 10000: 200}.get(fee, 60)
+        
+        return {
+            'currency0': currency0,
+            'currency1': currency1,
+            'fee': fee,
+            'tickSpacing': tick_spacing,
+            'hooks': '0x0000000000000000000000000000000000000000'
+        }
     
     @retry(
         stop=stop_after_attempt(3),
@@ -104,126 +122,85 @@ class V4DirectRouter:
         print(f"[dim]Building V4 swap with library...[/dim]")
         
         try:
-            # Build the swap using the library
-            # V4 swap pattern: WRAP_ETH -> V4_SWAP -> SETTLE -> TAKE
-            
-            # Get PoolKey for the pair
-            # Sort currencies for V4
-            if self.weth.lower() < token_address.lower():
-                currency0, currency1 = self.weth, token_address
-                zero_for_one = True
-            else:
-                currency0, currency1 = token_address, self.weth
-                zero_for_one = False
-            
             # Try common fee tiers
             fee_tiers = [500, 3000, 10000]
-            pool_key = None
             
             for fee in fee_tiers:
-                tick_spacing = {100: 1, 500: 10, 3000: 60, 10000: 200}.get(fee, 60)
-                
-                # Build PoolKey
-                test_pool_key = {
-                    'currency0': currency0,
-                    'currency1': currency1,
-                    'fee': fee,
-                    'tickSpacing': tick_spacing,
-                    'hooks': '0x0000000000000000000000000000000000000000'
-                }
-                
-                # Try to verify pool exists by checking if we can build the transaction
                 try:
-                    # Build a test transaction to see if pool exists
-                    print(f"[dim]  Trying fee={fee}, tickSpacing={tick_spacing}...[/dim]")
+                    print(f"[dim]  Trying fee={fee}...[/dim]")
+                    
+                    # Build PoolKey
+                    pool_key = self._build_v4_pool_key(self.weth, token_address, fee)
+                    
+                    # Determine swap direction
+                    zero_for_one = self.weth.lower() == pool_key['currency0'].lower()
                     
                     # Estimate expected output (conservative)
                     expected_out = int(amount_in_wei * 0.995)
                     min_amount_out = self._calculate_min_amount_out(expected_out, slippage_percent)
                     
-                    # Build V4 swap with library
-                    # First wrap ETH, then swap
-                    self.codec.add_wrap_eth(
-                        amount_in_wei,
-                        self.FunctionRecipient.ROUTER
-                    )
+                    # Build swap using library's encode.chain() API
+                    # Pattern: wrap ETH -> V4 swap exact in
+                    chain = self.codec.encode.chain()
                     
-                    # Add V4 swap
-                    self.codec.add_v4_swap_exact_in_single(
-                        pool_key=test_pool_key,
+                    # Add V4 swap exact in single
+                    # Note: The library uses chained calls via .chain()
+                    chain.v4_swap_exact_in_single(
+                        pool_key=pool_key,
                         zero_for_one=zero_for_one,
-                        amount_in=amount_in_wei,
-                        amount_out_min=min_amount_out,
+                        amount_in=self.Wei(amount_in_wei),
+                        amount_out_min=self.Wei(min_amount_out),
                         sqrt_price_limit_x96=0,
                         hook_data=b''
                     )
                     
-                    # Settle output token (receive tokens)
-                    self.codec.add_settle(
-                        token_address,
-                        amount_in_wei,  # This is wrong but library will handle it
-                        False  # is_input=False means receiving
-                    )
+                    # The library should handle wrapping and settlement internally
+                    # when we build the transaction
                     
-                    # Take output tokens
-                    self.codec.add_take(
-                        token_address,
-                        self.FunctionRecipient.SENDER,
-                        min_amount_out  # Take at least min amount
-                    )
-                    
-                    # Sweep remaining WETH
-                    self.codec.add_sweep(
-                        self.weth,
-                        self.FunctionRecipient.SENDER,
-                        0  # min amount = 0 means sweep all
-                    )
-                    
-                    pool_key = test_pool_key
                     print(f"[green]✓ Found V4 pool: fee={fee}[/green]")
-                    break
+                    
+                    # Build transaction
+                    deadline = int(time.time()) + deadline_seconds
+                    
+                    tx = self.codec.build_transaction(
+                        chain=chain,
+                        from_address=self.account.address,
+                        deadline=deadline,
+                        value=amount_in_wei,
+                        w3=self.w3
+                    )
+                    
+                    print(f"[dim]Transaction built, sending...[/dim]")
+                    
+                    # Sign and send
+                    signed = self.account.sign_transaction(tx)
+                    tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+                    tx_hex = self.w3.to_hex(tx_hash)
+                    
+                    print(f"[dim]TX: {tx_hex}[/dim]")
+                    
+                    # Wait for receipt
+                    receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+                    
+                    self.total_swaps += 1
+                    self.total_gas_spent += receipt['gasUsed']
+                    
+                    if receipt['status'] == 1:
+                        self.successful_swaps += 1
+                        print(f"[green]✓ V4 swap successful! Gas used: {receipt['gasUsed']}[/green]")
+                        return True, tx_hex
+                    else:
+                        error_msg = f"V4 swap failed (status={receipt['status']}) - TX: {tx_hex}"
+                        print(f"[red]✗ {error_msg}[/red]")
+                        raise TransactionError(error_msg)
                     
                 except Exception as e:
-                    print(f"[dim]  Fee={fee} not available: {e}[/dim]")
-                    self.codec = self.codec.__class__()  # Reset codec
-                    continue
+                    if "Fee=" in str(e):
+                        print(f"[dim]  Fee={fee} not available, trying next...[/dim]")
+                        continue
+                    raise
             
-            if not pool_key:
-                return False, "No V4 pool found for token pair"
-            
-            # Build final transaction
-            deadline = int(time.time()) + deadline_seconds
-            
-            tx_data = self.codec.build_transaction(
-                chain_id=self.chain_id,
-                from_address=self.account.address,
-                deadline=deadline,
-                value=amount_in_wei
-            )
-            
-            print(f"[dim]Transaction built, sending...[/dim]")
-            
-            # Send transaction
-            signed = self.account.sign_transaction(tx_data)
-            tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
-            tx_hex = self.w3.to_hex(tx_hash)
-            
-            print(f"[dim]TX: {tx_hex}[/dim]")
-            
-            # Wait for receipt
-            receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-            
-            self.total_swaps += 1
-            self.total_gas_spent += receipt['gasUsed']
-            
-            if receipt['status'] == 1:
-                self.successful_swaps += 1
-                print(f"[green]✓ V4 swap successful! Gas used: {receipt['gasUsed']}[/green]")
-                return True, tx_hex
-            else:
-                error_msg = f"V4 swap failed (status={receipt['status']}) - TX: {tx_hex}"
-                print(f"[red]✗ {error_msg}[/red]")
-                raise TransactionError(error_msg)
+            return False, "No V4 pool found for token pair"
                 
         except TransactionError:
             raise
@@ -256,87 +233,56 @@ class V4DirectRouter:
         print(f"[dim]Building V4 token->ETH swap...[/dim]")
         
         try:
-            # Reset codec
-            self.codec = self.codec.__class__()
-            
-            # Sort currencies
-            if token_address.lower() < self.weth.lower():
-                currency0, currency1 = token_address, self.weth
-                zero_for_one = True
-            else:
-                currency0, currency1 = self.weth, token_address
-                zero_for_one = False
-            
-            # Find pool
+            # Try fee tiers
             fee_tiers = [500, 3000, 10000]
-            pool_key = None
             
             for fee in fee_tiers:
-                tick_spacing = {100: 1, 500: 10, 3000: 60, 10000: 200}.get(fee, 60)
-                
-                test_pool_key = {
-                    'currency0': currency0,
-                    'currency1': currency1,
-                    'fee': fee,
-                    'tickSpacing': tick_spacing,
-                    'hooks': '0x0000000000000000000000000000000000000000'
-                }
-                
                 try:
                     print(f"[dim]  Trying fee={fee}...[/dim]")
+                    
+                    pool_key = self._build_v4_pool_key(token_address, self.weth, fee)
+                    zero_for_one = token_address.lower() == pool_key['currency0'].lower()
                     
                     expected_out = int(amount_in_units * 0.995)
                     min_amount_out = self._calculate_min_amount_out(expected_out, slippage_percent)
                     
-                    # V4 swap
-                    self.codec.add_v4_swap_exact_in_single(
-                        pool_key=test_pool_key,
+                    chain = self.codec.encode.chain()
+                    
+                    chain.v4_swap_exact_in_single(
+                        pool_key=pool_key,
                         zero_for_one=zero_for_one,
-                        amount_in=amount_in_units,
-                        amount_out_min=min_amount_out,
+                        amount_in=self.Wei(amount_in_units),
+                        amount_out_min=self.Wei(min_amount_out),
                         sqrt_price_limit_x96=0,
                         hook_data=b''
                     )
                     
-                    # Settle WETH output
-                    self.codec.add_settle(self.weth, min_amount_out, False)
+                    deadline = int(time.time()) + deadline_seconds
                     
-                    # Take WETH
-                    self.codec.add_take(self.weth, self.FunctionRecipient.SENDER, min_amount_out)
+                    tx = self.codec.build_transaction(
+                        chain=chain,
+                        from_address=self.account.address,
+                        deadline=deadline,
+                        w3=self.w3
+                    )
                     
-                    # Unwrap WETH to ETH
-                    self.codec.add_unwrap_eth(self.FunctionRecipient.SENDER, min_amount_out)
+                    signed = self.account.sign_transaction(tx)
+                    tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+                    tx_hex = self.w3.to_hex(tx_hash)
                     
-                    pool_key = test_pool_key
-                    print(f"[green]✓ Found pool: fee={fee}[/green]")
-                    break
+                    receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+                    
+                    if receipt['status'] == 1:
+                        return True, tx_hex
+                    else:
+                        raise TransactionError(f"Swap failed (status={receipt['status']})")
                     
                 except Exception as e:
-                    print(f"[dim]  Fee={fee} not available: {e}[/dim]")
-                    self.codec = self.codec.__class__()
-                    continue
+                    if "Fee=" in str(e):
+                        continue
+                    raise
             
-            if not pool_key:
-                return False, "No V4 pool found"
-            
-            deadline = int(time.time()) + deadline_seconds
-            
-            tx_data = self.codec.build_transaction(
-                chain_id=self.chain_id,
-                from_address=self.account.address,
-                deadline=deadline
-            )
-            
-            signed = self.account.sign_transaction(tx_data)
-            tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
-            tx_hex = self.w3.to_hex(tx_hash)
-            
-            receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-            
-            if receipt['status'] == 1:
-                return True, tx_hex
-            else:
-                raise TransactionError(f"Swap failed (status={receipt['status']})")
+            return False, "No V4 pool found"
                 
         except TransactionError:
             raise
