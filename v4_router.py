@@ -142,14 +142,23 @@ class V4DirectRouter:
                     # Pattern: wrap ETH -> V4 swap exact in -> take tokens
                     chain = self.codec.encode.chain()
                     
-                    # 1. Wrap ETH to WETH (command 0x0a)
+                    # 1. Wrap ETH to WETH (command 0x0a) - recipient ROUTER so it holds WETH
                     chain.wrap_eth(self.FunctionRecipient.ROUTER, amount_in_wei)
+                    print(f"[dim]  Added WRAP_ETH command (recipient=ROUTER)[/dim]")
                     
-                    print(f"[dim]  Added WRAP_ETH command[/dim]")
-                    
-                    # 2. Add V4 swap exact in single (command 0x10)
-                    # chain.v4_swap() returns a builder object
+                    # 2. Add V4 swap (command 0x10)
+                    # V4 requires: SETTLE -> SWAP -> TAKE
                     v4_swap = chain.v4_swap()
+                    
+                    # SETTLE the WETH input (pay from router's balance)
+                    v4_swap.settle(
+                        currency=self.weth,
+                        amount=amount_in_wei,
+                        payer_is_sender=False  # Router pays (using wrapped ETH)
+                    )
+                    print(f"[dim]  Added V4 SETTLE for WETH[/dim]")
+                    
+                    # Execute the swap
                     v4_swap.swap_exact_in_single(
                         pool_key=pool_key,
                         zero_for_one=zero_for_one,
@@ -157,9 +166,15 @@ class V4DirectRouter:
                         amount_out_min=min_amount_out,
                         hook_data=b''
                     )
-                    # Take the output tokens to wallet
-                    # take(currency, recipient, amount) - specify exact recipient
-                    v4_swap.take(currency=token_address, recipient=self.account.address, amount=min_amount_out)
+                    print(f"[dim]  Added V4 SWAP_EXACT_IN_SINGLE[/dim]")
+                    
+                    # TAKE the output tokens to wallet
+                    v4_swap.take(
+                        currency=token_address,
+                        recipient=self.account.address,
+                        amount=min_amount_out
+                    )
+                    print(f"[dim]  Added V4 TAKE for COMPUTE[/dim]")
                     
                     # CRITICAL: Build v4 swap to commit commands to chain
                     chain = v4_swap.build_v4_swap()

@@ -1143,11 +1143,22 @@ def simulate_command(token_address: str = COMPUTE_TOKEN, amount: float = 0.0005,
         codec = RouterCodec(w3=w3)
         chain = codec.encode.chain()
         
-        # 1. Wrap ETH to WETH (command 0x0a)
+        # 1. Wrap ETH to WETH (command 0x0a) - recipient ROUTER so it holds WETH
         chain.wrap_eth(FunctionRecipient.ROUTER, amount_in_wei)
-        console.print("[dim]  Added WRAP_ETH command[/dim]")
+        console.print("[dim]  Added WRAP_ETH command (recipient=ROUTER)[/dim]")
         
-        # 2. V4 swap
+        # 2. V4 swap with SETTLE -> SWAP -> TAKE pattern
+        v4_swap = chain.v4_swap()
+        
+        # SETTLE the WETH input
+        v4_swap.settle(
+            currency=weth,
+            amount=amount_in_wei,
+            payer_is_sender=False
+        )
+        console.print("[dim]  Added V4 SETTLE for WETH[/dim]")
+        
+        # Execute the swap
         v4_swap = chain.v4_swap()
         v4_swap.swap_exact_in_single(
             pool_key=pool_key,
@@ -1204,10 +1215,11 @@ def simulate_command(token_address: str = COMPUTE_TOKEN, amount: float = 0.0005,
         
         # Check for expected command patterns
         console.print("[bold cyan]✅ Expected Command Sequence:[/bold cyan]")
-        console.print("  1. WRAP_ETH (0x0a) - Wrap ETH to WETH")
-        console.print("  2. V4_SWAP (0x10) - Execute V4 swap")
+        console.print("  1. WRAP_ETH (0x0a) - Wrap ETH to WETH (router holds)")
+        console.print("  2. V4_SWAP (0x10) - Execute V4 swap:")
+        console.print("     - settle (pay WETH from router)")
         console.print("     - swap_exact_in_single")
-        console.print("     - take (to recipient wallet)")
+        console.print("     - take (COMPUTE to wallet)")
         console.print()
         
         # Eth call simulation (if requested - w3 already connected)
