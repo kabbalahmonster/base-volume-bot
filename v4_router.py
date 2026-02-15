@@ -154,7 +154,7 @@ class V4DirectRouter:
                     v4_swap.settle(
                         currency=self.weth,
                         amount=amount_in_wei,
-                        payer_is_sender=False  # Router pays (using wrapped ETH)
+                        payer_is_user=False  # Router pays (using wrapped ETH)
                     )
                     print(f"[dim]  Added V4 SETTLE for WETH[/dim]")
                     

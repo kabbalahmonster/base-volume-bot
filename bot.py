@@ -1154,7 +1154,7 @@ def simulate_command(token_address: str = COMPUTE_TOKEN, amount: float = 0.0005,
         v4_swap.settle(
             currency=weth,
             amount=amount_in_wei,
-            payer_is_sender=False
+            payer_is_user=False  # Router pays (using wrapped ETH)
         )
         console.print("[dim]  Added V4 SETTLE for WETH[/dim]")
         
