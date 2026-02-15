@@ -151,11 +151,11 @@ class V4DirectRouter:
                     # V4 requires: SETTLE -> SWAP -> TAKE
                     v4_swap = chain.v4_swap()
                     
-                    # SETTLE the WETH input (pay from router's balance)
+                    # SETTLE the WETH input (pay from sender's credited balance)
                     v4_swap.settle(
                         currency=self.weth,
                         amount=amount_in_wei,
-                        payer_is_user=False  # Router pays (using wrapped ETH)
+                        payer_is_user=True  # Sender pays (using wrapped ETH credited to their account)
                     )
                     print(f"[dim]  Added V4 SETTLE for WETH[/dim]")
                     

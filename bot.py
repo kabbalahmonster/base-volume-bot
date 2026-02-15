@@ -1151,11 +1151,11 @@ def simulate_command(token_address: str = COMPUTE_TOKEN, amount: float = 0.0005,
         # 2. V4 swap with SETTLE -> SWAP -> TAKE pattern
         v4_swap = chain.v4_swap()
         
-        # SETTLE the WETH input
+        # SETTLE the WETH input (pay from sender's credited balance)
         v4_swap.settle(
             currency=weth,
             amount=amount_in_wei,
-            payer_is_user=False  # Router pays (using wrapped ETH)
+            payer_is_user=True  # Sender pays (using wrapped ETH credited to their account)
         )
         console.print("[dim]  Added V4 SETTLE for WETH[/dim]")
         
