@@ -523,16 +523,19 @@ class MultiDEXRouter:
                 wrap_call = router.functions.wrapETH(amount_in_wei)._encode_transaction_data()
                 
                 # 2. Swap WETH for token (value=0 since WETH is already in router)
-                swap_call = router.functions.exactInputSingle({
-                    'tokenIn': self.weth,
-                    'tokenOut': self.token_address,
-                    'fee': self.best_fee,
-                    'recipient': self.account.address,
-                    'deadline': deadline,
-                    'amountIn': amount_in_wei,
-                    'amountOutMinimum': min_out,
-                    'sqrtPriceLimitX96': 0
-                })._encode_transaction_data()
+                # web3.py v7 requires tuple, not dict for struct params
+                # ExactInputSingleParams order: (tokenIn, tokenOut, fee, recipient, deadline, amountIn, amountOutMinimum, sqrtPriceLimitX96)
+                swap_params = (
+                    self.weth,
+                    self.token_address,
+                    self.best_fee,
+                    self.account.address,
+                    deadline,
+                    amount_in_wei,
+                    min_out,
+                    0  # sqrtPriceLimitX96
+                )
+                swap_call = router.functions.exactInputSingle(swap_params)._encode_transaction_data()
                 
                 # 3. Refund any unused ETH
                 refund_call = router.functions.refundETH()._encode_transaction_data()
@@ -671,16 +674,18 @@ class MultiDEXRouter:
                 self.w3.eth.wait_for_transaction_receipt(approve_hash, timeout=120)
                 
                 deadline = int(self.w3.eth.get_block('latest')['timestamp']) + 300
-                tx = router.functions.exactInputSingle({
-                    'tokenIn': self.token_address,
-                    'tokenOut': self.weth,
-                    'fee': self.best_fee,
-                    'recipient': self.account.address,
-                    'deadline': deadline,
-                    'amountIn': amount_in_units,
-                    'amountOutMinimum': 0,
-                    'sqrtPriceLimitX96': 0
-                }).build_transaction({
+                # web3.py v7 requires tuple for struct params
+                swap_params = (
+                    self.token_address,
+                    self.weth,
+                    self.best_fee,
+                    self.account.address,
+                    deadline,
+                    amount_in_units,
+                    0,  # amountOutMinimum
+                    0   # sqrtPriceLimitX96
+                )
+                tx = router.functions.exactInputSingle(swap_params).build_transaction({
                     'from': self.account.address,
                     'gas': 300000,
                     'gasPrice': self.w3.eth.gas_price,
