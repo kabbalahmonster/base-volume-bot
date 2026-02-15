@@ -36,7 +36,7 @@
 |---------|-------------|
 | 🔐 **Secure** | Private key encryption with PBKDF2-HMAC-SHA256 (600k iterations) |
 | ⛽ **Gas Optimized** | Dynamic gas pricing with configurable limits |
-| 🔄 **Multi-DEX Support** | Uniswap V3, 1inch, 0x, and Uniswap V4 routers |
+| 🔄 **Multi-DEX Support** | Uniswap V3 (✅ working), 0x (ready), 1inch (ready), V4 (⚠️ experimental) |
 | 🐝 **Swarm Mode** | Coordinate multiple wallets for volume multiplication |
 | 🧪 **Dry Run Mode** | Test without spending real funds |
 | 📊 **Rich CLI** | Beautiful terminal UI with progress bars and tables |
@@ -104,6 +104,28 @@
    └─→ Continue buy loop
    └─→ Log all activity
 ```
+
+---
+
+## ⚠️ DEX Router Status
+
+| Router | Status | Notes |
+|--------|--------|-------|
+| **Uniswap V3** | ✅ Production Ready | Tested with BNKR, Aerodrome integration |
+| **0x Aggregator** | ✅ Ready | API integration complete, needs testing |
+| **1inch** | ✅ Ready | API integration complete |
+| **Uniswap V4** | ⚠️ Experimental | Complex encoding issues, not delivering tokens |
+
+### V4 Router Status
+The V4 Universal Router integration is currently **non-functional**. Despite extensive debugging:
+- Library encoding appears correct (SETTLE → SWAP → TAKE)
+- Transactions succeed without revert
+- ETH is wrapped and SETTLE payer is configured correctly
+- **No COMPUTE tokens are delivered**
+
+**Root cause:** Unknown. Possibly Base UR version mismatch, internal credit semantics, or V4 action encoding issues.
+
+**Recommendation:** Use V3 or 0x aggregator for production. V4 remains in `feature/v4-universal-router` branch for future investigation.
 
 ---
 
