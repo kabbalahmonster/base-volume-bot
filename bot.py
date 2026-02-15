@@ -33,8 +33,9 @@ from rich.text import Text
 from rich import box
 from rich.logging import RichHandler
 
-# Import wallet and DEX router
+# Import wallet and DEX routers
 from wallet import SecureKeyManager, SecureWallet
+from oneinch_router import OneInchAggregator
 from dex_router import MultiDEXRouter
 
 # Constants
@@ -174,6 +175,7 @@ class VolumeBot:
         self.private_key = private_key
         self.w3: Optional[Web3] = None
         self.account: Optional[Account] = None
+        self.oneinch: Optional[OneInchAggregator] = None
         self.dex_router: Optional[MultiDEXRouter] = None
         self.compute_token = None
 
@@ -222,7 +224,9 @@ class VolumeBot:
             console.print(f"[red]✗ Invalid private key: {e}[/red]")
             return False
         
-        # Setup DEX router (multi-DEX support)
+        # Setup DEX routers (1inch primary, MultiDEX fallback)
+        console.print("[dim]Initializing 1inch aggregator...[/dim]")
+        self.oneinch = OneInchAggregator(self.w3, self.account)
         self.dex_router = MultiDEXRouter(self.w3, self.account, COMPUTE_TOKEN)
         self.compute_token = self.w3.eth.contract(
             address=self.w3.to_checksum_address(COMPUTE_TOKEN),
@@ -288,13 +292,23 @@ class VolumeBot:
                 console.print(f"[red]✗ Insufficient ETH balance[/red]")
                 return False
             
-            # Execute swap using multi-DEX router
-            console.print(f"[dim]Swapping {amount_eth} ETH for $COMPUTE via {self.dex_router.get_best_dex() or 'best DEX'}...[/dim]")
+            # Execute swap using 1inch (primary) with fallback to multi-DEX router
+            console.print(f"[dim]Swapping {amount_eth} ETH for $COMPUTE via 1inch...[/dim]")
 
-            success, result = self.dex_router.swap_eth_for_tokens(
+            success, result = self.oneinch.swap_eth_for_tokens(
+                COMPUTE_TOKEN,
                 amount_eth,
                 slippage_percent=self.config.slippage_percent
             )
+
+            if not success:
+                console.print(f"[yellow]⚠ 1inch failed: {result}[/yellow]")
+                console.print(f"[dim]Falling back to multi-DEX router...[/dim]")
+
+                success, result = self.dex_router.swap_eth_for_tokens(
+                    amount_eth,
+                    slippage_percent=self.config.slippage_percent
+                )
 
             if success:
                 console.print(f"[green]✓ Buy successful![/green]")
@@ -332,13 +346,27 @@ class VolumeBot:
             
             console.print(f"[dim]Selling {compute_balance:.4f} $COMPUTE...[/dim]")
             
-            # Execute swap using multi-DEX router
-            console.print(f"[dim]Swapping {compute_balance:.4f} $COMPUTE for ETH via {self.dex_router.get_best_dex() or 'best DEX'}...[/dim]")
+            # Execute swap using 1inch (primary) with fallback to multi-DEX router
+            console.print(f"[dim]Swapping {compute_balance:.4f} $COMPUTE for ETH via 1inch...[/dim]")
 
-            success, result = self.dex_router.swap_tokens_for_eth(
+            # Get token decimals
+            token_decimals = self.compute_token.functions.decimals().call()
+
+            success, result = self.oneinch.swap_tokens_for_eth(
+                COMPUTE_TOKEN,
                 compute_balance,
+                token_decimals=token_decimals,
                 slippage_percent=self.config.slippage_percent
             )
+
+            if not success:
+                console.print(f"[yellow]⚠ 1inch failed: {result}[/yellow]")
+                console.print(f"[dim]Falling back to multi-DEX router...[/dim]")
+
+                success, result = self.dex_router.swap_tokens_for_eth(
+                    compute_balance,
+                    slippage_percent=self.config.slippage_percent
+                )
 
             if success:
                 console.print(f"[green]✓ Sell successful![/green]")
