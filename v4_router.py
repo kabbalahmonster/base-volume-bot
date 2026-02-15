@@ -1,11 +1,25 @@
 #!/usr/bin/env python3
 """
-Uniswap V4 Universal Router Integration
-========================================
-Full V4 integration for COMPUTE and other V4-only tokens.
+Uniswap V4 Universal Router Integration (BETA - NOT YET FUNCTIONAL)
+=====================================================================
+WARNING: This module is a work-in-progress placeholder. V4 integration
+is more complex than V2/V3 due to architectural differences.
 
-Uses Universal Router with encoded commands for ETH->Token swaps.
-This is a fallback when 0x aggregator is not available.
+Current Status:
+- Command encoding: Implemented
+- Pool discovery: NOT WORKING (V4 uses PoolId, not addresses)
+- Testing: Not yet functional
+
+V4 Architecture Challenges:
+1. Pools identified by PoolKey → PoolId (not simple addresses)
+2. PoolManager interface differs from V2/V3 factories
+3. Requires understanding of V4 singleton architecture
+
+For COMPUTE and V4-only tokens, RECOMMENDED approach:
+- Wait for 0x aggregator to add V4 support
+- Or use official Uniswap V4 frontend directly
+
+This module will be completed when V4 contract interfaces are fully understood.
 
 Universal Router on Base: 0x6c083a36f731ea994739ef5e8647d18553d41f76
 """
@@ -340,7 +354,19 @@ class V4UniversalRouter:
         # Find V4 pool
         pool = self._find_v4_pool(self.weth, token_address)
         if not pool:
-            return False, "No V4 pool found for token pair"
+            error_msg = """V4 pool discovery failed. 
+            
+This is a known limitation - V4 uses PoolKey/PoolId architecture which differs from V2/V3.
+Direct V4 integration requires deeper research into V4 contract interfaces.
+
+RECOMMENDED alternatives for V4-only tokens like COMPUTE:
+1. Wait for 0x aggregator to add V4 support (https://0x.org)
+2. Use official Uniswap V4 interface directly
+3. Check if token gets V3/V2 liquidity added in future
+
+For tokens with V2/V3 liquidity (like BNKR), use the multi-DEX router."""
+            print(f"[yellow]{error_msg}[/yellow]")
+            return False, "V4 pool discovery not yet implemented - see error details above"
         
         print(f"[green]✓ Found V4 pool: fee={pool['fee']}, tickSpacing={pool['tickSpacing']}[/green]")
         
