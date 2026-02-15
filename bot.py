@@ -318,7 +318,7 @@ class VolumeBot:
                         console.print("[dim][DRY RUN] Testing V4 transaction encoding...[/dim]")
                         
                         # Test building a V4 swap for COMPUTE
-                        from decimal import Decimal
+                        # Decimal already imported at module level
                         test_amount = Decimal('0.0001')  # Small test amount
                         
                         # Import library components
