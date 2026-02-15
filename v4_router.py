@@ -323,16 +323,20 @@ class V4DirectRouter:
             inputs.append(close_delta_input)
             
             # Command 4: TAKE - take output tokens
+            # Use uint128.max (2^128 - 1) to mean "take all available"
+            uint128_max = (1 << 128) - 1
             take_input = encode(
                 ['address', 'address', 'uint128'],
-                [token_address, self.account.address, 0]  # 0 = take all
+                [token_address, self.account.address, uint128_max]
             )
             inputs.append(take_input)
             
             # Command 5: SWEEP - sweep any remaining WETH
+            # Use uint160.max (2^160 - 1) to mean "sweep all"
+            uint160_max = (1 << 160) - 1
             sweep_input = encode(
                 ['address', 'address', 'uint160'],
-                [self.weth, self.account.address, 0]
+                [self.weth, self.account.address, uint160_max]
             )
             inputs.append(sweep_input)
             
