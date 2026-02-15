@@ -551,17 +551,23 @@ class SecureSwarmManager:
         
         audit_records = []
         
+        # Get starting nonce with 'pending' to account for in-flight txs
+        next_nonce = self.web3.eth.get_transaction_count(main_address, 'pending')
+        
         for wallet in self.wallets:
             try:
-                # Build transaction
+                # Build transaction with explicit nonce (incremented for each wallet)
                 tx = {
                     'to': wallet.address,
                     'value': self.web3.to_wei(eth_per_wallet, 'ether'),
                     'gas': 21000,
                     'gasPrice': self.web3.eth.gas_price,
-                    'nonce': self.web3.eth.get_transaction_count(main_address),
+                    'nonce': next_nonce,  # Use tracked nonce
                     'chainId': 8453  # Base mainnet
                 }
+                
+                # Increment nonce for next iteration
+                next_nonce += 1
                 
                 # Sign and send
                 signed_tx = self.web3.eth.account.sign_transaction(tx, main_wallet_key)

@@ -33,6 +33,9 @@ from wallet import SecureWallet
 from config import Config
 from utils import logger, format_eth, format_address
 
+# Import 0x router for swarm trading
+from zerox_router import ZeroXAggregator
+
 
 console = Console()
 
@@ -136,12 +139,18 @@ class SwarmTrader:
         # Active traders cache (wallet_index -> ComputeTrader)
         self._traders: Dict[int, ComputeTrader] = {}
         
+        # 0x aggregator cache (wallet_index -> ZeroXAggregator)
+        self._zerox_aggregators: Dict[int, ZeroXAggregator] = {}
+        
         # Current buy count per wallet (for sell triggers)
         self._wallet_buy_counts: Dict[int, int] = {}
+        
+        # Router type - default to 0x for swarm
+        self.router_type = getattr(base_config, 'router_type', '0x')
     
     def _get_trader_for_wallet(self, wallet_index: int) -> ComputeTrader:
         """
-        Get or create a ComputeTrader for a specific swarm wallet.
+        Get or create a ComputeTrader for a specific swarm wallet (legacy V3 router).
         
         Args:
             wallet_index: Index of the wallet in the swarm
@@ -186,6 +195,34 @@ class SwarmTrader:
         
         return trader
     
+    def _get_zerox_for_wallet(self, wallet_index: int) -> ZeroXAggregator:
+        """
+        Get or create a ZeroXAggregator for a specific swarm wallet (0x router).
+        
+        Args:
+            wallet_index: Index of the wallet in the swarm
+            
+        Returns:
+            ZeroXAggregator instance for that wallet
+        """
+        if wallet_index in self._zerox_aggregators:
+            return self._zerox_aggregators[wallet_index]
+        
+        # Get wallet and decrypt
+        swarm_wallet, account = self.swarm_manager.get_wallet(wallet_index, self.password)
+        
+        # Create ZeroXAggregator
+        zerox = ZeroXAggregator(
+            self.web3,
+            account,
+            api_key=getattr(self.base_config, 'zerox_api_key', None)
+        )
+        
+        # Cache it
+        self._zerox_aggregators[wallet_index] = zerox
+        
+        return zerox
+    
     async def execute_buy(self, specific_wallet: Optional[int] = None) -> SwarmTradeResult:
         """
         Execute a buy operation using the next wallet in rotation.
@@ -207,11 +244,27 @@ class SwarmTrader:
             
             logger.info(f"Executing buy with wallet {wallet_index}: {format_address(account.address)}")
             
-            # Get trader
-            trader = self._get_trader_for_wallet(wallet_index)
+            # Use 0x router if configured
+            buy_amount = getattr(self.base_config, 'buy_amount', getattr(self.base_config, 'buy_amount_eth', 0.002))
+            token_address = getattr(self.base_config, 'quote_token', getattr(self.base_config, 'compute_token', None))
             
-            # Execute buy
-            result = await trader.buy()
+            if self.router_type == "0x":
+                # Use 0x aggregator
+                zerox = self._get_zerox_for_wallet(wallet_index)
+                success, tx_hash = zerox.swap_eth_for_tokens(
+                    token_address=token_address,
+                    amount_eth=Decimal(str(buy_amount)),
+                    slippage_percent=self.base_config.slippage_percent
+                )
+                result = {
+                    'success': success,
+                    'tx_hash': tx_hash,
+                    'error': None if success else tx_hash
+                }
+            else:
+                # Use legacy V3 trader
+                trader = self._get_trader_for_wallet(wallet_index)
+                result = await trader.buy()
             
             # Create result
             trade_result = SwarmTradeResult(
@@ -220,7 +273,7 @@ class SwarmTrader:
                 wallet_address=account.address,
                 action='BUY',
                 tx_hash=result.get('tx_hash'),
-                eth_amount=self.base_config.buy_amount_eth,
+                eth_amount=buy_amount,
                 gas_used=result.get('gas_used'),
                 gas_cost_eth=result.get('gas_cost_eth'),
                 error=result.get('error')
@@ -285,14 +338,27 @@ class SwarmTrader:
                 swarm_wallet, account = self.swarm_manager.get_wallet(specific_wallet, self.password)
             else:
                 # For sells, use a wallet that has tokens
-                # Find wallet with highest COMPUTE balance
+                # Find wallet with highest token balance
                 best_wallet = None
                 best_balance = 0
+                token_address = getattr(self.base_config, 'quote_token', getattr(self.base_config, 'compute_token', None))
                 
                 for wallet in self.swarm_manager.wallets:
-                    eth_bal, comp_bal = self.swarm_manager._get_wallet_balance(wallet.address)
-                    if comp_bal > best_balance:
-                        best_balance = comp_bal
+                    # Check token balance
+                    token_contract = self.web3.eth.contract(
+                        address=self.web3.to_checksum_address(token_address),
+                        abi=[{"constant":True,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"type":"function"}]
+                    )
+                    try:
+                        bal = token_contract.functions.balanceOf(wallet.address).call()
+                        # Get decimals
+                        decimals = token_contract.functions.decimals().call()
+                        token_bal = bal / (10 ** decimals)
+                    except:
+                        token_bal = 0
+                    
+                    if token_bal > best_balance:
+                        best_balance = token_bal
                         best_wallet = wallet
                 
                 if best_wallet is None or best_balance <= 0:
@@ -301,7 +367,7 @@ class SwarmTrader:
                         wallet_index=-1,
                         wallet_address="",
                         action='SELL',
-                        error="No wallet with COMPUTE tokens found"
+                        error="No wallet with tokens found"
                     )
                 
                 swarm_wallet = best_wallet
@@ -311,19 +377,57 @@ class SwarmTrader:
             
             logger.info(f"Executing sell with wallet {wallet_index}: {format_address(account.address)}")
             
-            # Get trader
-            trader = self._get_trader_for_wallet(wallet_index)
+            # Use 0x router if configured
+            token_address = getattr(self.base_config, 'quote_token', getattr(self.base_config, 'compute_token', None))
             
-            # Get current balance before sell
-            compute_before = trader.get_compute_balance()
-            eth_before = trader.get_eth_balance()
-            
-            # Execute sell
-            result = await trader.sell_all()
-            
-            # Calculate received amounts
-            eth_after = trader.get_eth_balance()
-            eth_received = max(0, eth_after - eth_before)
+            if self.router_type == "0x":
+                # Use 0x aggregator
+                zerox = self._get_zerox_for_wallet(wallet_index)
+                
+                # Get token balance
+                token_contract = self.web3.eth.contract(
+                    address=self.web3.to_checksum_address(token_address),
+                    abi=[{"constant":True,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"type":"function"},{"constant":True,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"type":"function"}]
+                )
+                token_balance_raw = token_contract.functions.balanceOf(account.address).call()
+                token_decimals = token_contract.functions.decimals().call()
+                token_balance = Decimal(token_balance_raw) / Decimal(10 ** token_decimals)
+                
+                # Get ETH balance before
+                eth_before = self.web3.from_wei(self.web3.eth.get_balance(account.address), 'ether')
+                
+                # Execute sell
+                success, tx_hash = zerox.swap_tokens_for_eth(
+                    token_address=token_address,
+                    amount_tokens=token_balance,
+                    token_decimals=token_decimals,
+                    slippage_percent=self.base_config.slippage_percent
+                )
+                
+                # Get ETH balance after
+                eth_after = self.web3.from_wei(self.web3.eth.get_balance(account.address), 'ether')
+                eth_received = max(0, eth_after - eth_before)
+                
+                result = {
+                    'success': success,
+                    'tx_hash': tx_hash,
+                    'tokens_sold': float(token_balance),
+                    'error': None if success else tx_hash
+                }
+            else:
+                # Use legacy V3 trader
+                trader = self._get_trader_for_wallet(wallet_index)
+                
+                # Get current balance before sell
+                compute_before = trader.get_compute_balance()
+                eth_before = trader.get_eth_balance()
+                
+                # Execute sell
+                result = await trader.sell_all()
+                
+                # Calculate received amounts
+                eth_after = trader.get_eth_balance()
+                eth_received = max(0, eth_after - eth_before)
             
             # Create result
             trade_result = SwarmTradeResult(
@@ -332,7 +436,7 @@ class SwarmTrader:
                 wallet_address=account.address,
                 action='SELL',
                 tx_hash=result.get('tx_hash'),
-                compute_amount=result.get('tokens_sold', compute_before),
+                compute_amount=result.get('tokens_sold', 0),
                 eth_amount=eth_received,
                 gas_used=result.get('gas_used'),
                 gas_cost_eth=result.get('gas_cost_eth'),
