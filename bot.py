@@ -150,47 +150,77 @@ console = Console()
 
 @dataclass
 class BotConfig:
-    """Bot configuration"""
+    """Bot configuration with flexible trading options"""
+    # Chain settings
     chain: str = "base"
-    buy_amount_eth: float = 0.002
-    buy_interval_minutes: int = 5
-    sell_after_buys: int = 10
+    
+    # Token pair settings (default: ETH/COMPUTE)
+    base_token: str = "ETH"  # "ETH" or token address
+    quote_token: str = "0x696381f39F17cAD67032f5f52A4924ce84e51BA3"  # Token to buy/sell
+    
+    # Trading amounts
+    buy_amount: float = 0.002  # Amount of base_token to spend per buy
+    buy_amount_is_eth: bool = True  # True if buy_amount is ETH, False if token amount
+    
+    # Cycle settings
+    max_cycles: Optional[int] = None  # None = infinite, number = run X cycles then stop
+    buys_per_cycle: int = 10  # Number of buys before selling
+    buy_interval_minutes: int = 5  # Minutes between buys
+    
+    # Trading options
     slippage_percent: float = 2.0
     max_gas_gwei: float = 0.5
     min_eth_balance: float = 0.001
+    auto_sell: bool = True  # Whether to sell after buys_per_cycle
+    
+    # Operational settings
     dry_run: bool = False
     log_level: str = "INFO"
     router_type: str = "0x"  # 0x (primary), v3 (fallback), or v4 (experimental)
-    zerox_api_key: Optional[str] = None  # Optional 0x API key for higher rate limits
+    zerox_api_key: Optional[str] = None  # Optional 0x API key
     
     def to_dict(self) -> Dict:
         return asdict(self)
     
     @classmethod
     def from_dict(cls, data: Dict) -> 'BotConfig':
-        return cls(**data)
+        # Filter to only valid fields
+        valid_fields = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_fields}
+        return cls(**filtered_data)
 
 
 class VolumeBot:
-    """Main volume bot with integrated trading"""
+    """Main volume bot with integrated trading - supports flexible token pairs"""
 
-    def __init__(self, config: BotConfig, private_key: str, token_address: str = COMPUTE_TOKEN):
+    def __init__(self, config: BotConfig, private_key: str, token_address: str = None):
         self.config = config
         self.private_key = private_key
-        self.token_address = token_address
-        self.token_symbol = "COMPUTE"  # Will be fetched from contract
+        
+        # Support both old and new config style
+        self.base_token = config.base_token if hasattr(config, 'base_token') else "ETH"
+        self.quote_token = token_address or config.quote_token
+        
+        self.base_token_symbol = "ETH"
+        self.quote_token_symbol = "TOKEN"
+        
         self.w3: Optional[Web3] = None
         self.account: Optional[Account] = None
         self.oneinch: Optional[OneInchAggregator] = None
         self.dex_router: Optional[MultiDEXRouter] = None
-        self.token_contract = None
+        self.zerox: Optional[Any] = None
+        self.v4_router: Optional[Any] = None
+        self.base_token_contract = None
+        self.quote_token_contract = None
 
         # Stats
+        self.cycle_count = 0
         self.buy_count = 0
-        self.total_bought_eth = Decimal("0")
-        self.total_bought_tokens = Decimal("0")
+        self.total_bought_base = Decimal("0")
+        self.total_bought_quote = Decimal("0")
         self.successful_buys = 0
         self.failed_buys = 0
+        self.successful_sells = 0
 
         self.setup_logging()
     
@@ -207,7 +237,7 @@ class VolumeBot:
         self.logger = logging.getLogger("VolumeBot")
     
     def connect(self) -> bool:
-        """Connect to blockchain"""
+        """Connect to blockchain and setup trading pair"""
         console.print("\n[bold cyan]🔗 Connecting to Base...[/bold cyan]")
         
         # Try multiple RPCs
@@ -230,8 +260,30 @@ class VolumeBot:
             console.print(f"[red]✗ Invalid private key: {e}[/red]")
             return False
         
-        # Setup DEX routers based on config
-        router_type = getattr(self.config, 'router_type', 'v3')
+        # Setup token contracts
+        is_eth_base = self.base_token.upper() == "ETH"
+        
+        if not is_eth_base:
+            self.base_token_contract = self.w3.eth.contract(
+                address=self.w3.to_checksum_address(self.base_token),
+                abi=ERC20_ABI
+            )
+            try:
+                self.base_token_symbol = self.base_token_contract.functions.symbol().call()
+            except:
+                self.base_token_symbol = "BASE"
+        
+        self.quote_token_contract = self.w3.eth.contract(
+            address=self.w3.to_checksum_address(self.quote_token),
+            abi=ERC20_ABI
+        )
+        try:
+            self.quote_token_symbol = self.quote_token_contract.functions.symbol().call()
+        except:
+            self.quote_token_symbol = "QUOTE"
+        
+        # Setup DEX routers
+        router_type = getattr(self.config, 'router_type', '0x')
         console.print(f"[dim]Initializing router: {router_type}...[/dim]")
         
         if router_type == "0x":
@@ -245,37 +297,33 @@ class VolumeBot:
             self.v4_router = V4DirectRouter(self.w3, self.account)
             self.dex_router = None
             self.oneinch = None
-            self.zerox = None
-        else:  # v3 or default
-            console.print("[dim]Initializing 1inch aggregator...[/dim]")
+        else:  # v3
             self.oneinch = OneInchAggregator(self.w3, self.account)
-            self.dex_router = MultiDEXRouter(self.w3, self.account, self.token_address)
-            self.zerox = None
-            self.v4_router = None
-        self.token_contract = self.w3.eth.contract(
-            address=self.w3.to_checksum_address(self.token_address),
-            abi=ERC20_ABI
-        )
+            self.dex_router = MultiDEXRouter(self.w3, self.account, self.quote_token)
         
-        # Try to fetch token symbol
-        try:
-            self.token_symbol = self.token_contract.functions.symbol().call()
-        except:
-            self.token_symbol = "TOKEN"  # Fallback
+        # Display trading pair info
+        console.print(f"\n[bold cyan]📊 Trading Pair[/bold cyan]")
+        console.print(f"  Base:  {self.base_token_symbol} ({self.base_token[:20]}...)")
+        console.print(f"  Quote: {self.quote_token_symbol} ({self.quote_token[:20]}...)")
+        console.print(f"  Mode:  Buy {self.quote_token_symbol} with {self.base_token_symbol}")
+        if getattr(self.config, 'auto_sell', True):
+            console.print(f"  Sell:  After {getattr(self.config, 'buys_per_cycle', 10)} buys")
         
         # Check balances
         eth_balance = self.get_eth_balance()
-        token_balance = self.get_token_balance()
+        base_balance = self.get_base_balance()
+        quote_balance = self.get_quote_balance()
         
-        console.print(f"[green]✓ Connected successfully[/green]")
-        console.print(f"[dim]  Address: {self.account.address}[/dim]")
-        console.print(f"[dim]  ETH Balance: {eth_balance:.4f} ETH[/dim]")
-        console.print(f"[dim]  ${self.token_symbol} Balance: {token_balance:.4f}[/dim]")
+        console.print(f"\n[bold cyan]💰 Balances[/bold cyan]")
+        console.print(f"  ETH:   {eth_balance:.6f}")
+        console.print(f"  {self.base_token_symbol}: {base_balance:.6f}")
+        console.print(f"  {self.quote_token_symbol}: {quote_balance:.6f}")
         
         if eth_balance < self.config.min_eth_balance:
-            console.print(f"[red]⚠ Low ETH balance! Need at least {self.config.min_eth_balance} ETH[/red]")
+            console.print(f"[red]⚠ Low ETH for gas! Need at least {self.config.min_eth_balance} ETH[/red]")
             return False
         
+        console.print(f"[green]✓ Connected successfully[/green]")
         return True
     
     def get_eth_balance(self) -> Decimal:
@@ -284,6 +332,36 @@ class VolumeBot:
             return Decimal("0")
         balance_wei = self.w3.eth.get_balance(self.account.address)
         return Decimal(self.w3.from_wei(balance_wei, 'ether'))
+    
+    def get_base_balance(self) -> Decimal:
+        """Get base token balance (ETH or ERC20)"""
+        if not self.w3 or not self.account:
+            return Decimal("0")
+        
+        is_eth = self.base_token.upper() == "ETH"
+        if is_eth:
+            return self.get_eth_balance()
+        
+        if self.base_token_contract:
+            balance = self.base_token_contract.functions.balanceOf(self.account.address).call()
+            try:
+                decimals = self.base_token_contract.functions.decimals().call()
+                return Decimal(balance) / Decimal(10 ** decimals)
+            except:
+                return Decimal(balance)
+        return Decimal("0")
+    
+    def get_quote_balance(self) -> Decimal:
+        """Get quote token balance"""
+        if not self.w3 or not self.account or not self.quote_token_contract:
+            return Decimal("0")
+        
+        balance = self.quote_token_contract.functions.balanceOf(self.account.address).call()
+        try:
+            decimals = self.quote_token_contract.functions.decimals().call()
+            return Decimal(balance) / Decimal(10 ** decimals)
+        except:
+            return Decimal(balance)
     
     def get_token_balance(self, token_address: str = None) -> Decimal:
         """Get token balance"""
@@ -622,25 +700,37 @@ class VolumeBot:
                 progress.advance(task)
     
     def run(self):
-        """Main bot loop"""
-        # Connect first to get token symbol
+        """Main bot loop with cycle support"""
+        # Connect first
         if not self.connect():
             return
         
-        # Now print banner with correct symbol
+        # Get config values with defaults
+        max_cycles = getattr(self.config, 'max_cycles', None)
+        buys_per_cycle = getattr(self.config, 'buys_per_cycle', 10)
+        auto_sell = getattr(self.config, 'auto_sell', True)
+        buy_amount = getattr(self.config, 'buy_amount', self.config.buy_amount_eth)
+        
+        # Now print banner
         console.print(Panel.fit(
-            f"[bold cyan]${self.token_symbol} Volume Bot[/bold cyan]\n"
+            f"[bold cyan]🤖 Volume Bot | {self.base_token_symbol}/{self.quote_token_symbol}[/bold cyan]\n"
             "[dim]Cult of the Shell | Base Network[/dim]",
             box=box.DOUBLE
         ))
         
         # Show config
-        console.print(f"\n[dim]Configuration:[/dim]")
-        console.print(f"  Buy Amount: {self.config.buy_amount_eth} ETH")
+        console.print(f"\n[bold cyan]⚙️  Configuration[/bold cyan]")
+        console.print(f"  Trading Pair: {self.base_token_symbol} → {self.quote_token_symbol}")
+        console.print(f"  Buy Amount: {buy_amount} {self.base_token_symbol}")
         console.print(f"  Interval: {self.config.buy_interval_minutes} minutes")
-        console.print(f"  Sell After: {self.config.sell_after_buys} buys")
+        console.print(f"  Buys/Cycle: {buys_per_cycle}")
+        console.print(f"  Auto-Sell: {'✅ Yes' if auto_sell else '❌ No'}")
+        if max_cycles:
+            console.print(f"  Max Cycles: {max_cycles}")
+        else:
+            console.print(f"  Max Cycles: ♾️  Unlimited")
         console.print(f"  Slippage: {self.config.slippage_percent}%")
-        console.print(f"  Mode: {'DRY RUN' if self.config.dry_run else 'LIVE'}")
+        console.print(f"  Mode: {'🧪 DRY RUN' if self.config.dry_run else '💰 LIVE'}")
         
         self.show_stats()
         
@@ -648,26 +738,51 @@ class VolumeBot:
         console.print("[dim]Press Ctrl+C to stop\n[/dim]")
         
         try:
-            while True:
-                # Execute buy
-                if self.execute_buy():
-                    self.show_stats()
-                    
-                    # Check if time to sell
-                    if self.buy_count >= self.config.sell_after_buys:
-                        console.print("\n[bold yellow]🎯 Target reached! Selling all...[/bold yellow]")
-                        
-                        if self.execute_sell():
-                            console.print("[bold green]✓ Cycle complete! Restarting...[/bold green]")
-                            self.buy_count = 0
-                            self.successful_buys = 0
-                            self.total_bought_eth = Decimal("0")
-                            time.sleep(5)
-                        else:
-                            console.print("[red]✗ Sell failed. Continuing buys...[/red]")
+            while max_cycles is None or self.cycle_count < max_cycles:
+                self.cycle_count += 1
+                if max_cycles:
+                    console.print(f"\n[bold cyan]🔄 Cycle {self.cycle_count}/{max_cycles}[/bold cyan]")
+                else:
+                    console.print(f"\n[bold cyan]🔄 Cycle {self.cycle_count}[/bold cyan]")
                 
-                # Countdown to next buy
-                self.countdown(self.config.buy_interval_minutes)
+                # Execute buys in this cycle
+                for buy_num in range(1, buys_per_cycle + 1):
+                    console.print(f"\n[dim]Buy {buy_num}/{buys_per_cycle} in cycle {self.cycle_count}[/dim]")
+                    
+                    if self.execute_buy():
+                        self.show_stats()
+                        
+                        # If not the last buy, wait for interval
+                        if buy_num < buys_per_cycle:
+                            self.countdown(self.config.buy_interval_minutes)
+                    else:
+                        console.print("[yellow]⚠ Buy failed, continuing...[/yellow]")
+                        time.sleep(10)  # Short delay after failed buy
+                
+                # Sell if auto_sell is enabled
+                if auto_sell:
+                    console.print("\n[bold yellow]🎯 Cycle buys complete! Selling all...[/bold yellow]")
+                    
+                    if self.execute_sell():
+                        console.print("[bold green]✓ Sell successful! Cycle complete.[/bold green]")
+                        self.successful_sells += 1
+                        self.buy_count = 0  # Reset buy count for next cycle
+                    else:
+                        console.print("[red]✗ Sell failed. Will retry in next cycle.[/red]")
+                else:
+                    console.print("[dim]Auto-sell disabled. Holding position.[/dim]")
+                
+                # Show cycle summary
+                self.show_cycle_summary()
+                
+                # Pause between cycles
+                if max_cycles is None or self.cycle_count < max_cycles:
+                    console.print("\n[dim]Waiting 10s before next cycle...[/dim]")
+                    time.sleep(10)
+                
+            # Max cycles reached
+            console.print(f"\n[bold green]✅ Completed {max_cycles} cycles![/bold green]")
+            self.show_stats()
                 
         except KeyboardInterrupt:
             console.print("\n[yellow]⚠ Bot stopped by user[/yellow]")
@@ -675,6 +790,47 @@ class VolumeBot:
         except Exception as e:
             self.logger.error(f"Fatal error: {e}")
             console.print(f"\n[red]✗ Fatal error: {e}[/red]")
+    
+    def liquidate_all(self) -> bool:
+        """Sell all quote tokens for base tokens"""
+        console.print(f"\n[bold red]💸 LIQUIDATING ALL {self.quote_token_symbol}...[/bold red]")
+        
+        quote_balance = self.get_quote_balance()
+        if quote_balance <= 0:
+            console.print(f"[yellow]No {self.quote_token_symbol} to liquidate[/yellow]")
+            return False
+        
+        console.print(f"  Balance: {quote_balance:.6f} {self.quote_token_symbol}")
+        
+        if self.config.dry_run:
+            console.print("[yellow][DRY RUN] Would liquidate all tokens[/yellow]")
+            return True
+        
+        # Execute sell
+        success = self.execute_sell()
+        if success:
+            console.print(f"[bold green]✓ Liquidated all {self.quote_token_symbol}![/bold green]")
+        else:
+            console.print(f"[red]✗ Liquidation failed[/red]")
+        
+        return success
+    
+    def show_cycle_summary(self):
+        """Show summary of current cycle"""
+        quote_balance = self.get_quote_balance()
+        base_balance = self.get_base_balance()
+        
+        table = Table(title=f"📊 Cycle {self.cycle_count} Summary", box=box.ROUNDED)
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", style="green")
+        
+        table.add_row("Buys This Cycle", str(self.buy_count))
+        table.add_row("Successful Buys", str(self.successful_buys))
+        table.add_row("Successful Sells", str(self.successful_sells))
+        table.add_row(f"{self.base_token_symbol} Balance", f"{base_balance:.6f}")
+        table.add_row(f"{self.quote_token_symbol} Balance", f"{quote_balance:.6f}")
+        
+        console.print(table)
 
 
 def setup_command():
@@ -855,17 +1011,52 @@ def balance_command():
     table.add_column("Balance", style="green")
     
     eth_balance = bot.get_eth_balance()
-    compute_balance = bot.get_token_balance()
-    
-    # Get token symbol from bot if possible, else default
-    token_symbol = "COMPUTE"
-    if bot.token_symbol:
-        token_symbol = bot.token_symbol
+    base_balance = bot.get_base_balance()
+    quote_balance = bot.get_quote_balance()
     
     table.add_row("ETH", f"{eth_balance:.6f}")
-    table.add_row(f"${token_symbol}", f"{compute_balance:.6f}")
+    table.add_row(bot.base_token_symbol, f"{base_balance:.6f}")
+    table.add_row(bot.quote_token_symbol, f"{quote_balance:.6f}")
     
     console.print(table)
+
+
+def liquidate_command(dry_run: bool = False, token_address: str = COMPUTE_TOKEN, router: str = "0x"):
+    """Liquidate all tokens for ETH"""
+    # Load config
+    try:
+        with open("bot_config.json", 'r') as f:
+            config_data = json.load(f)
+        config = BotConfig.from_dict(config_data)
+    except FileNotFoundError:
+        console.print("[red]Config not found. Run 'setup' first.[/red]")
+        return
+    
+    # Get password and load key
+    console.print("[yellow]Enter wallet password:[/yellow]")
+    password = getpass.getpass("> ")
+    
+    key_manager = SecureKeyManager()
+    private_key = key_manager.load_and_decrypt(password)
+    
+    if not private_key:
+        console.print("[red]Failed to decrypt wallet. Wrong password?[/red]")
+        return
+    
+    # Override settings
+    if dry_run:
+        config.dry_run = True
+    config.router_type = router
+    config.quote_token = token_address
+    config.auto_sell = True  # Enable selling
+    
+    # Initialize bot
+    bot = VolumeBot(config, private_key, token_address)
+    if not bot.connect():
+        return
+    
+    # Execute liquidation
+    bot.liquidate_all()
 
 
 def main():
@@ -895,6 +1086,14 @@ def main():
     # Balance command
     balance_parser = subparsers.add_parser("balance", help="Check wallet balances")
     
+    # Liquidate command
+    liquidate_parser = subparsers.add_parser("liquidate", help="Sell all tokens for ETH")
+    liquidate_parser.add_argument("--dry-run", action="store_true", help="Simulation mode")
+    liquidate_parser.add_argument("--token-address", type=str, default=COMPUTE_TOKEN,
+                                  help=f"Token to liquidate (default: {COMPUTE_TOKEN})")
+    liquidate_parser.add_argument("--router", type=str, default="0x", choices=["0x", "v3", "v4"],
+                                  help="DEX router to use (default: 0x)")
+    
     args = parser.parse_args()
     
     if args.command == "setup":
@@ -906,6 +1105,8 @@ def main():
                         withdraw_compute=args.compute, dry_run=args.dry_run)
     elif args.command == "balance":
         balance_command()
+    elif args.command == "liquidate":
+        liquidate_command(dry_run=args.dry_run, token_address=args.token_address, router=args.router)
     else:
         parser.print_help()
 
