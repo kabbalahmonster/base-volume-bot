@@ -299,9 +299,17 @@ class V4DirectRouter:
     
     def recover_eth_from_router(self) -> Tuple[bool, str]:
         """
-        Recover ETH stuck in Universal Router contract.
+        ⚠️  IMPORTANT LIMITATION ⚠️
         
-        Uses SWEEP command to pull ETH from UR back to wallet.
+        This function CANNOT recover ETH that was accidentally sent to the Universal Router
+        contract via empty execute() calls. That ETH is effectively stuck/donated.
+        
+        The Universal Router does not have a function to arbitrarily withdraw its ETH balance.
+        SWEEP only works for ETH that is part of the current execution context, not for
+        previously sent donations.
+        
+        This function is kept for documentation purposes but will likely not recover
+        funds from failed V4 test transactions.
         
         Returns:
             (success, tx_hash or error message)
@@ -309,12 +317,14 @@ class V4DirectRouter:
         if not self.has_library:
             return False, "Library not installed"
         
-        print(f"[dim]Recovering ETH from Universal Router...[/dim]")
+        print(f"[yellow]⚠️  WARNING: ETH sent to Universal Router is likely unrecoverable[/yellow]")
+        print(f"[dim]Attempting sweep (may not work for stuck ETH)...[/dim]")
         
         try:
             chain = self.codec.encode.chain()
             
             # Sweep ETH (address(0) represents native ETH)
+            # NOTE: This only sweeps ETH from current execution, not previously stuck ETH
             chain.sweep(
                 function_recipient=self.FunctionRecipient.SENDER,
                 token_address="0x0000000000000000000000000000000000000000",  # ETH
@@ -336,10 +346,11 @@ class V4DirectRouter:
             receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
             
             if receipt['status'] == 1:
-                print(f"[green]✓ ETH recovered! TX: {tx_hex[:20]}...[/green]")
+                print(f"[yellow]⚠️  TX succeeded but ETH may not be recoverable[/yellow]")
+                print(f"[dim]TX: {tx_hex[:20]}...[/dim]")
                 return True, tx_hex
             else:
-                return False, f"Recovery failed (status={receipt['status']})"
+                return False, f"Sweep failed (status={receipt['status']})"
                 
         except Exception as e:
             return False, f"Recovery error: {e}"

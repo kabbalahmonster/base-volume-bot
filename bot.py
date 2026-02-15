@@ -955,7 +955,21 @@ def balance_command():
 
 
 def recover_command(unwrap_weth: bool = False):
-    """Recover ETH stuck in Universal Router contract"""
+    """
+    Recover ETH stuck in Universal Router contract.
+    
+    ⚠️  IMPORTANT LIMITATION:
+    ETH accidentally sent to the Universal Router via failed transactions
+    CANNOT be recovered. The UR contract has no function to withdraw its
+    ETH balance. This command is kept for documentation but will likely
+    not recover stuck funds.
+    
+    Current situation:
+    - ~0.002 ETH stuck in UR from failed V4 tests (unrecoverable)
+    - ~0.001 ETH in wallet (insufficient for more tests)
+    
+    Recommendation: Fund wallet with more ETH before further testing.
+    """
     # Load config
     try:
         with open("bot_config.json", 'r') as f:
@@ -1064,7 +1078,7 @@ def main():
     balance_parser = subparsers.add_parser("balance", help="Check wallet balances")
     
     # Recover command - recover ETH stuck in Universal Router
-    recover_parser = subparsers.add_parser("recover", help="Recover ETH from Universal Router")
+    recover_parser = subparsers.add_parser("recover", help="Recover ETH from Universal Router (LIMITED - see docs)")
     recover_parser.add_argument("--unwrap", action="store_true", help="Also unwrap any WETH")
     
     args = parser.parse_args()
