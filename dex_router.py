@@ -191,6 +191,15 @@ UNISWAP_V3_ROUTER_ABI = [
         "outputs": [],
         "stateMutability": "payable",
         "type": "function"
+    },
+    {
+        "inputs": [
+            {"internalType": "uint256", "name": "value", "type": "uint256"}
+        ],
+        "name": "wrapETH",
+        "outputs": [],
+        "stateMutability": "payable",
+        "type": "function"
     }
 ]
 
@@ -504,22 +513,37 @@ class MultiDEXRouter:
                 print(f"[dim]Using V3 pool: {self.best_pool[:20]}... with fee={self.best_fee}[/dim]")
                 
                 # For V3, we need to estimate output
-                # Using a simplified approach - in production use QuoterV2
                 min_out = 0  # Would use proper quoting in production
                 
                 deadline = int(self.w3.eth.get_block('latest')['timestamp']) + 300
                 
-                # Build V3 swap transaction
-                tx = router.functions.exactInputSingle({
-                    'tokenIn': self.weth,
-                    'tokenOut': self.token_address,
-                    'fee': self.best_fee,
-                    'recipient': self.account.address,
-                    'deadline': deadline,
-                    'amountIn': amount_in_wei,
-                    'amountOutMinimum': min_out,
-                    'sqrtPriceLimitX96': 0
-                }).build_transaction({
+                # Build multicall for ETH->Token: wrapETH + exactInputSingle + refundETH
+                # 1. Wrap ETH to WETH
+                wrap_call = router.encodeABI(
+                    fn_name="wrapETH",
+                    args=[amount_in_wei]
+                )
+                
+                # 2. Swap WETH for token (value=0 since WETH is already in router)
+                swap_call = router.encodeABI(
+                    fn_name="exactInputSingle",
+                    args=[{
+                        'tokenIn': self.weth,
+                        'tokenOut': self.token_address,
+                        'fee': self.best_fee,
+                        'recipient': self.account.address,
+                        'deadline': deadline,
+                        'amountIn': amount_in_wei,
+                        'amountOutMinimum': min_out,
+                        'sqrtPriceLimitX96': 0
+                    }]
+                )
+                
+                # 3. Refund any unused ETH
+                refund_call = router.encodeABI(fn_name="refundETH")
+                
+                # Build multicall transaction
+                tx = router.functions.multicall([wrap_call, swap_call, refund_call]).build_transaction({
                     'from': self.account.address,
                     'value': amount_in_wei,
                     'gas': 300000,
