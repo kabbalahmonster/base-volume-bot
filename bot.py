@@ -213,10 +213,11 @@ class VolumeBot:
         self.base_token_contract = None
         self.quote_token_contract = None
 
-        # Stats
+        # Stats (backward compatible - total_bought_eth is alias for total_bought_base)
         self.cycle_count = 0
         self.buy_count = 0
         self.total_bought_base = Decimal("0")
+        self.total_bought_eth = self.total_bought_base  # Alias for backward compatibility
         self.total_bought_quote = Decimal("0")
         self.successful_buys = 0
         self.failed_buys = 0
@@ -676,10 +677,16 @@ class VolumeBot:
         table.add_column("Metric", style="cyan")
         table.add_column("Value", style="green")
 
-        table.add_row("Buy Count", f"{self.buy_count}/{self.config.sell_after_buys}")
+        # Backward compatibility for config fields
+        buys_target = getattr(self.config, 'buys_per_cycle',
+                              getattr(self.config, 'sell_after_buys', 10))
+        total_spent = getattr(self, 'total_bought_base',
+                              getattr(self, 'total_bought_eth', Decimal("0")))
+
+        table.add_row("Buy Count", f"{self.buy_count}/{buys_target}")
         table.add_row("Successful Buys", str(self.successful_buys))
         table.add_row("Failed Buys", str(self.failed_buys))
-        table.add_row("Total ETH Spent", f"{self.total_bought_eth:.4f}")
+        table.add_row(f"Total {self.base_token_symbol} Spent", f"{total_spent:.4f}")
         table.add_row("Dry Run", "Yes" if self.config.dry_run else "No")
 
         console.print(table)
@@ -707,11 +714,13 @@ class VolumeBot:
         if not self.connect():
             return
 
-        # Get config values with defaults
+        # Get config values with defaults (backward compatible)
         max_cycles = getattr(self.config, 'max_cycles', None)
-        buys_per_cycle = getattr(self.config, 'buys_per_cycle', 10)
+        buys_per_cycle = getattr(self.config, 'buys_per_cycle',
+                                 getattr(self.config, 'sell_after_buys', 10))
         auto_sell = getattr(self.config, 'auto_sell', True)
-        buy_amount = getattr(self.config, 'buy_amount', self.config.buy_amount_eth)
+        buy_amount = getattr(self.config, 'buy_amount',
+                             getattr(self.config, 'buy_amount_eth', 0.002))
 
         # Now print banner
         console.print(Panel.fit(
