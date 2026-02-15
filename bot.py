@@ -2,7 +2,7 @@
 """
 Complete Volume Bot Implementation
 ==================================
-Production-ready volume generation bot for $COMPUTE on Base.
+Production-ready volume generation bot for any token on Base.
 
 Fixed Version - All critical issues resolved.
 """
@@ -170,19 +170,21 @@ class BotConfig:
 class VolumeBot:
     """Main volume bot with integrated trading"""
 
-    def __init__(self, config: BotConfig, private_key: str):
+    def __init__(self, config: BotConfig, private_key: str, token_address: str = COMPUTE_TOKEN):
         self.config = config
         self.private_key = private_key
+        self.token_address = token_address
+        self.token_symbol = "COMPUTE"  # Will be fetched from contract
         self.w3: Optional[Web3] = None
         self.account: Optional[Account] = None
         self.oneinch: Optional[OneInchAggregator] = None
         self.dex_router: Optional[MultiDEXRouter] = None
-        self.compute_token = None
+        self.token_contract = None
 
         # Stats
         self.buy_count = 0
         self.total_bought_eth = Decimal("0")
-        self.total_bought_compute = Decimal("0")
+        self.total_bought_tokens = Decimal("0")
         self.successful_buys = 0
         self.failed_buys = 0
 
@@ -227,20 +229,26 @@ class VolumeBot:
         # Setup DEX routers (1inch primary, MultiDEX fallback)
         console.print("[dim]Initializing 1inch aggregator...[/dim]")
         self.oneinch = OneInchAggregator(self.w3, self.account)
-        self.dex_router = MultiDEXRouter(self.w3, self.account, COMPUTE_TOKEN)
-        self.compute_token = self.w3.eth.contract(
-            address=self.w3.to_checksum_address(COMPUTE_TOKEN),
+        self.dex_router = MultiDEXRouter(self.w3, self.account, self.token_address)
+        self.token_contract = self.w3.eth.contract(
+            address=self.w3.to_checksum_address(self.token_address),
             abi=ERC20_ABI
         )
         
+        # Try to fetch token symbol
+        try:
+            self.token_symbol = self.token_contract.functions.symbol().call()
+        except:
+            self.token_symbol = "TOKEN"  # Fallback
+        
         # Check balances
         eth_balance = self.get_eth_balance()
-        compute_balance = self.get_token_balance()
+        token_balance = self.get_token_balance()
         
         console.print(f"[green]✓ Connected successfully[/green]")
         console.print(f"[dim]  Address: {self.account.address}[/dim]")
         console.print(f"[dim]  ETH Balance: {eth_balance:.4f} ETH[/dim]")
-        console.print(f"[dim]  $COMPUTE Balance: {compute_balance:.4f}[/dim]")
+        console.print(f"[dim]  ${self.token_symbol} Balance: {token_balance:.4f}[/dim]")
         
         if eth_balance < self.config.min_eth_balance:
             console.print(f"[red]⚠ Low ETH balance! Need at least {self.config.min_eth_balance} ETH[/red]")
@@ -260,11 +268,15 @@ class VolumeBot:
         if not self.w3 or not self.account:
             return Decimal("0")
         
-        token_addr = token_address or COMPUTE_TOKEN
-        token = self.w3.eth.contract(
-            address=self.w3.to_checksum_address(token_addr),
-            abi=ERC20_ABI
-        )
+        # Use instance token if no address provided
+        if token_address is None and self.token_contract:
+            token = self.token_contract
+        else:
+            token_addr = token_address or self.token_address
+            token = self.w3.eth.contract(
+                address=self.w3.to_checksum_address(token_addr),
+                abi=ERC20_ABI
+            )
         
         balance = token.functions.balanceOf(self.account.address).call()
         decimals = token.functions.decimals().call()
@@ -293,7 +305,7 @@ class VolumeBot:
                 return False
             
             # Execute swap using 1inch (primary) with fallback to multi-DEX router
-            console.print(f"[dim]Swapping {amount_eth} ETH for $COMPUTE via 1inch...[/dim]")
+            console.print(f"[dim]Swapping {amount_eth} ETH for ${self.token_symbol} via 1inch...[/dim]")
 
             success, result = self.oneinch.swap_eth_for_tokens(
                 COMPUTE_TOKEN,
@@ -329,7 +341,7 @@ class VolumeBot:
     
     def execute_sell(self) -> bool:
         """Execute sell transaction"""
-        console.print("\n[bold cyan]💰 Selling all $COMPUTE...[/bold cyan]")
+        console.print(f"\n[bold cyan]💰 Selling all ${self.token_symbol}...[/bold cyan]")
         
         if self.config.dry_run:
             console.print("[yellow][DRY RUN] Simulating sell...[/yellow]")
@@ -344,10 +356,10 @@ class VolumeBot:
                 console.print("[red]✗ No COMPUTE to sell[/red]")
                 return False
             
-            console.print(f"[dim]Selling {compute_balance:.4f} $COMPUTE...[/dim]")
+            console.print(f"[dim]Selling {compute_balance:.4f} ${self.token_symbol}...[/dim]")
             
             # Execute swap using 1inch (primary) with fallback to multi-DEX router
-            console.print(f"[dim]Swapping {compute_balance:.4f} $COMPUTE for ETH via 1inch...[/dim]")
+            console.print(f"[dim]Swapping {compute_balance:.4f} ${self.token_symbol} for ETH via 1inch...[/dim]")
 
             # Get token decimals
             token_decimals = self.compute_token.functions.decimals().call()
@@ -389,7 +401,7 @@ class VolumeBot:
         Args:
             to_address: Destination wallet address
             amount_eth: Amount of ETH to withdraw (None = all except gas reserve)
-            withdraw_compute: If True, also withdraw all $COMPUTE
+            withdraw_compute: If True, also withdraw all tokens
         """
         console.print(f"\n[bold yellow]💸 WITHDRAWAL REQUEST[/bold yellow]")
         console.print(f"[dim]From: {self.account.address}[/dim]")
@@ -413,7 +425,7 @@ class VolumeBot:
             
             console.print(f"\n[dim]Current Balances:[/dim]")
             console.print(f"  ETH: {eth_balance:.6f}")
-            console.print(f"  $COMPUTE: {compute_balance:.6f}")
+            console.print(f"  ${self.token_symbol}: {compute_balance:.6f}")
             
             # Calculate withdrawal amount
             if amount_eth is None:
@@ -433,7 +445,7 @@ class VolumeBot:
             console.print(f"\n[yellow]⚠️ You are about to withdraw:[/yellow]")
             console.print(f"  {amount_eth_decimal:.6f} ETH")
             if withdraw_compute:
-                console.print(f"  {compute_balance:.6f} $COMPUTE")
+                console.print(f"  {compute_balance:.6f} ${self.token_symbol}")
             console.print(f"\n[yellow]To: {to_address}[/yellow]")
             
             confirm = input("\nType 'WITHDRAW' to confirm: ")
@@ -469,14 +481,14 @@ class VolumeBot:
                     console.print(f"[red]  Block: {receipt['blockNumber']}[/red]")
                     return False
 
-            # Withdraw $COMPUTE
+            # Withdraw tokens
             if withdraw_compute and compute_balance > 0:
-                console.print(f"\n[dim]Sending {compute_balance:.6f} $COMPUTE...[/dim]")
+                console.print(f"\n[dim]Sending {compute_balance:.6f} ${self.token_symbol}...[/dim]")
                 
-                decimals = self.compute_token.functions.decimals().call()
+                decimals = self.token_contract.functions.decimals().call()
                 amount_units = int(compute_balance * (10 ** decimals))
                 
-                tx = self.compute_token.functions.transfer(to_address, amount_units).build_transaction({
+                tx = self.token_contract.functions.transfer(to_address, amount_units).build_transaction({
                     'from': self.account.address,
                     'gas': 100000,
                     'gasPrice': self.w3.eth.gas_price,
@@ -549,7 +561,7 @@ class VolumeBot:
     def run(self):
         """Main bot loop"""
         console.print(Panel.fit(
-            "[bold cyan]$COMPUTE Volume Bot[/bold cyan]\n"
+            f"[bold cyan]${self.token_symbol} Volume Bot[/bold cyan]\n"
             "[dim]Cult of the Shell | Base Network[/dim]",
             box=box.DOUBLE
         ))
@@ -781,8 +793,13 @@ def balance_command():
     eth_balance = bot.get_eth_balance()
     compute_balance = bot.get_token_balance()
     
+    # Get token symbol from bot if possible, else default
+    token_symbol = "COMPUTE"
+    if bot.token_symbol:
+        token_symbol = bot.token_symbol
+    
     table.add_row("ETH", f"{eth_balance:.6f}")
-    table.add_row("$COMPUTE", f"{compute_balance:.6f}")
+    table.add_row(f"${token_symbol}", f"{compute_balance:.6f}")
     
     console.print(table)
 
@@ -806,7 +823,7 @@ def main():
     withdraw_parser = subparsers.add_parser("withdraw", help="Withdraw funds")
     withdraw_parser.add_argument("to", help="Destination wallet address")
     withdraw_parser.add_argument("--amount", type=float, help="ETH amount (omit for all)")
-    withdraw_parser.add_argument("--compute", action="store_true", help="Also withdraw all $COMPUTE")
+    withdraw_parser.add_argument("--compute", action="store_true", help="Also withdraw all tokens")
     withdraw_parser.add_argument("--dry-run", action="store_true", help="Simulation mode")
     
     # Balance command
