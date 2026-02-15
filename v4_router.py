@@ -143,19 +143,17 @@ class V4DirectRouter:
                     chain = self.codec.encode.chain()
                     
                     # Add V4 swap exact in single
-                    # Note: The library uses chained calls via .chain()
-                    # Method is v4_swap (not v4_swap_exact_in_single)
-                    chain.v4_swap(
+                    # chain.v4_swap() returns a builder object
+                    v4_swap = chain.v4_swap()
+                    v4_swap.swap_exact_in_single(
                         pool_key=pool_key,
                         zero_for_one=zero_for_one,
                         amount_in=amount_in_wei,
                         amount_out_min=min_amount_out,
-                        sqrt_price_limit_x96=0,
                         hook_data=b''
                     )
-                    
-                    # The library should handle wrapping and settlement internally
-                    # when we build the transaction
+                    # Take the output tokens
+                    v4_swap.take_all(currency=token_address, recipient=self.account.address)
                     
                     print(f"[green]✓ Found V4 pool: fee={fee}[/green]")
                     
@@ -248,14 +246,17 @@ class V4DirectRouter:
                     
                     chain = self.codec.encode.chain()
                     
-                    chain.v4_swap(
+                    # V4 swap builder pattern
+                    v4_swap = chain.v4_swap()
+                    v4_swap.swap_exact_in_single(
                         pool_key=pool_key,
                         zero_for_one=zero_for_one,
                         amount_in=amount_in_units,
                         amount_out_min=min_amount_out,
-                        sqrt_price_limit_x96=0,
                         hook_data=b''
                     )
+                    # Take WETH output
+                    v4_swap.take_all(currency=self.weth, recipient=self.account.address)
                     
                     deadline = int(time.time()) + deadline_seconds
                     

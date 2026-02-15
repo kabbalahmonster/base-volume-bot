@@ -353,15 +353,17 @@ class VolumeBot:
                         test_amount_wei = int(test_amount * 10**18)
                         chain.wrap_eth(FunctionRecipient.ROUTER, test_amount_wei)
                         
-                        # Add V4 swap
-                        chain.v4_swap(
+                        # Add V4 swap - chain.v4_swap() returns a builder
+                        v4_swap = chain.v4_swap()
+                        v4_swap.swap_exact_in_single(
                             pool_key=pool_key,
                             zero_for_one=zero_for_one,
                             amount_in=test_amount_wei,
                             amount_out_min=1,  # Minimal for test
-                            sqrt_price_limit_x96=0,
                             hook_data=b''
                         )
+                        # Settle and take the output
+                        v4_swap.take_all(currency=compute, recipient=self.account.address)
                         
                         # Build transaction
                         tx = codec.build_transaction(
