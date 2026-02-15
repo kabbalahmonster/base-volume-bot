@@ -298,7 +298,7 @@ class V4DirectRouter:
         
         try:
             # Build command sequence for V4 swap
-            commands = bytes([Commands.WRAP_ETH, Commands.V4_SWAP_EXACT_IN, Commands.TAKE, Commands.SWEEP])
+            commands = bytes([Commands.WRAP_ETH, Commands.V4_SWAP_EXACT_IN, Commands.CLOSE_DELTA, Commands.TAKE, Commands.SWEEP])
             
             inputs = []
             
@@ -315,14 +315,21 @@ class V4DirectRouter:
             )
             inputs.append(swap_input)
             
-            # Command 3: TAKE - take output tokens
+            # Command 3: CLOSE_DELTA - settle any open deltas before taking
+            close_delta_input = encode(
+                ['address'],
+                [token_address]
+            )
+            inputs.append(close_delta_input)
+            
+            # Command 4: TAKE - take output tokens
             take_input = encode(
                 ['address', 'address', 'uint128'],
                 [token_address, self.account.address, 0]  # 0 = take all
             )
             inputs.append(take_input)
             
-            # Command 4: SWEEP - sweep any remaining WETH
+            # Command 5: SWEEP - sweep any remaining WETH
             sweep_input = encode(
                 ['address', 'address', 'uint160'],
                 [self.weth, self.account.address, 0]
