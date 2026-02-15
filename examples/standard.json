@@ -1,0 +1,20 @@
+{
+  "_comment": "Standard Configuration - Balanced risk/reward for regular operation.",
+  "chain": "base",
+  "buy_amount_eth": 0.002,
+  "buy_interval_minutes": 5,
+  "sell_after_buys": 10,
+  "slippage_percent": 2.0,
+  "max_gas_gwei": 0.5,
+  "min_eth_balance": 0.01,
+  "reserve_eth": 0.005,
+  "dex_router": "auto",
+  "router_priority": ["1inch", "uniswap_v3", "0x"],
+  "dry_run": false,
+  "log_level": "INFO",
+  "max_retries": 3,
+  "retry_delay_seconds": 5,
+  "gas_price_strategy": "dynamic",
+  "max_daily_trades": 500,
+  "health_check_interval": 60
+}

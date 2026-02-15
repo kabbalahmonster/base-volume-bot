@@ -1,640 +1,189 @@
-# ❓ Swarm Mode - Frequently Asked Questions
-
-Quick answers to common questions about swarm mode.
-
----
+# Frequently Asked Questions
 
 ## General Questions
 
-### What is swarm mode?
+### Q: Is this bot free to use?
+**A:** Yes, the bot software is free and open source. You only pay network gas fees for transactions.
 
-Swarm mode allows you to run multiple trading bots (wallets) simultaneously as a coordinated group. Instead of managing one bot, you deploy a "swarm" of workers that trade together to generate higher volume and distribute risk.
+### Q: Can I lose money using this bot?
+**A:** Yes. This is a trading bot that buys and sells tokens. Token prices can go down. Only trade what you can afford to lose.
 
-### Why should I use swarm mode instead of a single bot?
+### Q: Do I need programming skills?
+**A:** Basic command line knowledge is helpful but not required. The setup wizard guides you through everything.
 
-| Single Bot | Swarm Mode |
-|------------|------------|
-| One trading wallet | Multiple wallets |
-| Lower volume | Higher volume |
-| Single point of failure | Distributed risk |
-| Easier to track | More organic appearance |
-| Simpler setup | More scalable |
+## Setup Questions
 
-### How much does it cost to run a swarm?
+### Q: How much ETH do I need to start?
+**A:** Minimum 0.01 ETH on Base network:
+- 0.005 ETH for trading
+- 0.005 ETH for gas reserves
 
-**Startup Costs:**
-- Worker funding: Depends on count × amount per worker
-- Gas for funding: ~0.0001 ETH per worker
+### Q: Where do I get Base ETH?
+**A:** Options:
+1. Bridge from Ethereum mainnet (expensive)
+2. Buy on Coinbase and withdraw to Base
+3. Use a Base faucet for test amounts
 
-**Ongoing Costs:**
-- Trading gas: ~0.0001 ETH per trade
-- Reclaim gas: ~0.0002 ETH per worker
+### Q: What is an API key and do I need one?
+**A:** API keys are for 0x and 1inch aggregators. They provide better prices but aren't required - the bot works with direct DEX routing.
 
-**Example (10 workers, 0.01 ETH each):**
-- Initial: 0.1 ETH + 0.001 gas = **0.101 ETH**
-- Daily gas (assuming 100 trades): ~0.01 ETH
+### Q: Is my private key safe?
+**A:** Yes, if you:
+- Use a strong encryption password
+- Keep `.bot_wallet.enc` secure
+- Don't share your password
 
-### What's the minimum amount to start?
+## Trading Questions
 
-**Absolute minimum:** 3 workers × 0.005 ETH = 0.015 ETH  
-**Recommended:** 5-10 workers × 0.01 ETH = 0.05-0.1 ETH
+### Q: Which tokens can I trade?
+**A:** Any token on Base with liquidity on:
+- Aerodrome ✅
+- Uniswap V3 ✅
+- Uniswap V2 ✅
 
-### Can I run multiple swarms at once?
+V4-only tokens (like COMPUTE) need 0x aggregator.
 
-Yes! Each swarm has its own configuration and workers:
+### Q: Why did my trade fail?
+**A:** Common reasons:
+1. Insufficient ETH for gas
+2. Pool has no liquidity
+3. Slippage too low
+4. Network congestion
+5. Token has transfer restrictions
 
-```bash
-python swarm.py init --name swarm_a --workers 5
-python swarm.py init --name swarm_b --workers 10
+### Q: How do I stop the bot?
+**A:** Press Ctrl+C. The bot will gracefully stop after completing the current cycle.
 
-python swarm.py start swarm_a
-python swarm.py start swarm_b  # In another terminal
-```
+### Q: Can I run multiple bots?
+**A:** Yes, but each needs:
+- Separate wallet
+- Separate config
+- Sufficient ETH balance
 
----
+## COMPUTE-Specific Questions
 
-## Setup & Configuration
+### Q: Can I trade COMPUTE with this bot?
+**A:** Currently limited. COMPUTE is V4-only and requires:
+- 0x aggregator (if they add V4 support), OR
+- Direct V4 implementation (not yet ready)
 
-### How do I create a swarm?
+### Q: When will COMPUTE trading work?
+**A:** Options:
+1. 0x adds V4 support (out of our control)
+2. We implement direct V4 Universal Router (in progress)
+3. COMPUTE gets V3/V2 liquidity (token team)
 
-```bash
-# Interactive mode (recommended for beginners)
-python swarm.py init
+### Q: Can I use 1inch for COMPUTE?
+**A:** Same limitation - 1inch doesn't route V4 yet.
 
-# Or specify options
-python swarm.py init --name my_swarm --workers 10 --funding 0.01
-```
+## Technical Questions
 
-### Where are swarm files stored?
+### Q: What is slippage?
+**A:** The maximum price difference you'll accept. 2% slippage means you accept up to 2% worse price than quoted.
 
-```
-swarm_configs/
-├── <swarm_name>.yaml          # Main configuration
-└── <swarm_name>/
-    ├── workers/
-    │   ├── worker_01.enc      # Encrypted private keys
-    │   ├── worker_02.enc
-    │   └── ...
-    └── logs/
-        └── *.log              # Worker logs
-```
+### Q: What is gas price?
+**A:** The fee paid to network validators. Higher = faster transaction. Bot defaults to max 5 gwei.
 
-### Can I use the same queen wallet for multiple swarms?
+### Q: What is a DEX?
+**A:** Decentralized Exchange - smart contracts that allow trading without intermediaries.
 
-Yes, but be careful about:
-- **Nonce conflicts:** If running simultaneously
-- **Balance tracking:** Harder to attribute costs
-- **Risk concentration:** Single point of failure
+### Q: What is Aerodrome?
+**A:** The most popular DEX on Base. Uses Solidly-style pools. Where BNKR has its liquidity.
 
-**Better approach:** Use different queen wallets per swarm.
+### Q: What is 0x?
+**A:** An aggregator that finds the best prices across all DEXs automatically.
 
-### How do I backup my swarm?
+## Troubleshooting
 
-```bash
-# Backup everything
-tar -czf swarm_backup_$(date +%Y%m%d).tar.gz swarm_configs/
+### Q: "No wallet file found" error?
+**A:** Run `python bot.py setup` first to create a wallet.
 
-# Store securely (these are encrypted but sensitive)
-cp swarm_backup_*.tar.gz /secure/backup/location/
-```
+### Q: "Insufficient ETH balance" but I have ETH?
+**A:** Make sure your ETH is on Base network, not Ethereum mainnet.
 
-**Critical files to backup:**
-- `swarm_configs/<name>.yaml`
-- `swarm_configs/<name>/workers/*.enc`
-
-### How do I change swarm configuration?
-
-```bash
-# View current config
-python swarm.py config my_swarm show
-
-# Edit specific value
-python swarm.py config my_swarm set max_gas_gwei 1.0
-
-# Open in editor
-python swarm.py config my_swarm edit
-```
-
-### Can I add workers to an existing swarm?
-
-Not directly. You need to:
-1. Stop the swarm
-2. Reclaim funds
-3. Create new swarm with desired worker count
-4. Fund and start
-
-```bash
-python swarm.py stop my_swarm --reclaim
-python swarm.py init --name my_swarm_v2 --workers 15
-python swarm.py fund my_swarm_v2
-python swarm.py start my_swarm_v2
-```
-
----
-
-## Funding & Reclaiming
-
-### How much should I fund each worker?
-
-**Guidelines:**
-
-| Worker Type | Amount | Duration |
-|-------------|--------|----------|
-| Test/learning | 0.003-0.005 ETH | 1-2 hours |
-| Small scale | 0.01 ETH | 4-8 hours |
-| Production | 0.02-0.05 ETH | 1-2 days |
-
-**Formula:**
-```
-Amount = (Buy_Amount × Sell_After_Buys) + Gas_Reserve
-Example: (0.002 × 10) + 0.005 = 0.025 ETH
-```
-
-### What happens if a worker runs out of ETH?
-
-The worker will:
-1. Log an error
-2. Stop trading
-3. Remain in "error" state
-
-**Solutions:**
-```bash
-# Top up specific worker
-python swarm.py fund my_swarm --workers worker_05 --amount 0.005
-
-# Top up all low workers
-python swarm.py fund my_swarm --top-up-gas
-```
-
-### How do I reclaim funds?
-
-```bash
-# Full reclaim (all workers, all tokens)
-python swarm.py reclaim my_swarm
-
-# Reclaim specific workers
-python swarm.py reclaim my_swarm --workers worker_01,worker_02
-
-# Reclaim only ETH
-python swarm.py reclaim my_swarm --eth-only
-
-# Stop and reclaim
-python swarm.py stop my_swarm --reclaim
-```
-
-### What if reclaim fails?
-
-**Check:**
-```bash
-# See pending transactions
-python swarm.py pending-txs my_swarm
-
-# Check worker balances
-python swarm.py balance my_swarm
-```
-
-**Retry:**
-```bash
-# Retry failed only
-python swarm.py reclaim my_swarm --retry-failed
-
-# With higher gas
-python swarm.py reclaim my_swarm --gas-boost 1.5
-```
-
-### Can I reclaim automatically?
-
-Yes, configure in `swarm.yaml`:
-
-```yaml
-reclaim:
-  auto_reclaim:
-    enabled: true
-    trigger: cycle_complete  # or: profit_threshold, schedule
-    
-  profit_threshold:
-    min_profit_eth: 0.01
-    
-  schedule:
-    - "08:00"
-    - "20:00"
-```
-
-Or via command line:
-```bash
-python swarm.py start my_swarm --reclaim-after-cycles 5
-python swarm.py start my_swarm --reclaim-at "2025-12-25 00:00:00"
-```
-
----
-
-## Trading & Strategies
-
-### What strategies are available?
-
-| Strategy | Best For | Description |
-|----------|----------|-------------|
-| `uniform` | Beginners | All workers identical |
-| `staggered` | Most users | Workers start at different times |
-| `randomized` | Organic look | Random amounts and intervals |
-| `wave` | Volume spikes | Coordinated trading waves |
-
-### How do I change strategy?
-
-Edit `swarm.yaml`:
-
-```yaml
-strategy:
-  type: staggered  # Change this
-  config:
-    # Strategy-specific settings
-```
-
-Or reinitialize:
-```bash
-python swarm.py init --name my_swarm --strategy randomized
-```
-
-### What's the difference between strategies?
-
-**Uniform:**
-```
-worker_01: Buy 0.002 ETH every 5 min
-worker_02: Buy 0.002 ETH every 5 min  ← Same!
-worker_03: Buy 0.002 ETH every 5 min
-```
-
-**Staggered:**
-```
-T+0s:   worker_01 starts (buys at 0, 5, 10...)
-T+30s:  worker_02 starts (buys at 0.5, 5.5, 10.5...)
-T+60s:  worker_03 starts (buys at 1, 6, 11...)
-```
-
-**Randomized:**
-```
-worker_01: Buy 0.001-0.003 ETH every 3-7 min
-worker_02: Buy 0.001-0.003 ETH every 3-7 min (different random values)
-```
-
-### Can workers have different settings?
-
-Yes, using worker profiles:
-
-```yaml
-worker_profiles:
-  aggressive:
-    buy_amount_eth: 0.005
-    buy_interval_minutes: 2
-    
-  conservative:
-    buy_amount_eth: 0.001
-    buy_interval_minutes: 10
-
-strategy:
-  workers:
-    - profile: aggressive
-      count: 3
-    - profile: conservative
-      count: 7
-```
-
-### How long should I run a swarm?
-
-**Recommendations:**
-
-| Goal | Duration | Notes |
-|------|----------|-------|
-| Testing | 15-30 min | Just to verify |
-| Daily volume | 8-12 hours | Workday coverage |
-| Continuous | 24-48 hours | With monitoring |
-| Max volume | 1-2 weeks | Reclaim regularly |
-
-### What happens during a sell cycle?
-
-1. Worker reaches `sell_after_buys` count
-2. Executes sell transaction (all $COMPUTE → ETH)
-3. Resets buy counter to 0
-4. Continues buying
-5. Logs cycle completion
-
-```
-[worker_01] Buy 9/10 completed
-[worker_01] Buy 10/10 completed
-[worker_01] 💰 SELLING ALL POSITIONS
-[worker_01] ✓ Sell successful! Got 0.021 ETH
-[worker_01] Cycle complete! Restarting...
-[worker_01] Buy 1/10...
-```
-
----
-
-## Monitoring & Troubleshooting
-
-### How do I check if my swarm is working?
-
-```bash
-# Quick status
-python swarm.py status my_swarm
-
-# Watch live
-python swarm.py status my_swarm --watch
-
-# Check logs
-python swarm.py logs my_swarm worker_01 --follow
-```
-
-### What do the status symbols mean?
-
-| Symbol | Status | Meaning |
-|--------|--------|---------|
-| ● | ACTIVE | Trading normally |
-| ◐ | PENDING | Starting up |
-| ◎ | STOPPED | Gracefully stopped |
-| ○ | ERROR | Needs attention |
-
-### Why are my transactions failing?
-
-**Common causes:**
-
-1. **Gas price too low**
-   ```bash
-   python swarm.py config my_swarm set max_gas_gwei 1.0
-   ```
-
-2. **Insufficient ETH for gas**
-   ```bash
-   python swarm.py fund my_swarm --top-up-gas
-   ```
-
-3. **Network congestion**
-   - Wait and retry
-   - Increase gas limit
-
-4. **RPC issues**
-   - Try different RPC endpoint
-   - Check connection
-
-### How do I view logs?
-
-```bash
-# All workers
-python swarm.py logs my_swarm
-
-# Specific worker
-python swarm.py logs my_swarm worker_01
-
-# Follow mode (live)
-python swarm.py logs my_swarm worker_01 --follow
-
-# Last N lines
-python swarm.py logs my_swarm --lines 50
-
-# Since specific time
-python swarm.py logs my_swarm --since "2025-01-15 10:00:00"
-```
-
-### Can I get alerts?
-
-Yes! Configure in `swarm.yaml`:
-
-```yaml
-alerts:
-  telegram:
-    enabled: true
-    bot_token: "YOUR_BOT_TOKEN"
-    chat_id: "YOUR_CHAT_ID"
-    
-  webhook:
-    enabled: true
-    url: "https://your-server.com/webhook"
-    events: ["trade_success", "worker_error", "reclaim_complete"]
-```
-
-Or use the dashboard:
-```bash
-python swarm.py dashboard my_swarm
-```
-
-### How do I stop a swarm gracefully?
-
-```bash
-# Graceful stop (waits for current trades)
-python swarm.py stop my_swarm
-
-# In the running terminal
-Ctrl+C
-
-# Force stop (immediate)
-python swarm.py stop my_swarm --force
-```
-
-### What if I lose my swarm password?
-
-⚠️ **Your worker funds will be lost.** The private keys are encrypted and cannot be recovered without the password.
-
-**Prevention:**
-- Store password in password manager
-- Reclaim funds regularly
-- Keep backups
-
-**Recovery options:**
-1. If queen wallet has backup → Create new swarm
-2. If workers still have funds → Cannot recover
-
----
-
-## Security
-
-### Is swarm mode safe?
-
-As safe as the underlying bot, with additional considerations:
-
-- ✅ Private keys are encrypted
-- ✅ Each worker is isolated
-- ✅ Loss limited to worker balances
-- ⚠️ More wallets = more attack surface
-- ⚠️ Queen wallet is critical
-
-### How do I keep my swarm secure?
-
-**Essential:**
-- [ ] Use dedicated queen wallet
-- [ ] Strong encryption password
-- [ ] Restrictive file permissions (600)
-- [ ] Never commit configs to git
-- [ ] Regular backups
-
-**Recommended:**
-- [ ] Run on dedicated server/VM
-- [ ] Firewall rules
-- [ ] Monitor for unusual activity
-- [ ] Set loss limits
-- [ ] Use hardware wallet for queen
-
-### Can someone steal my funds?
-
-If they gain access to:
-- **Worker files alone** → No (encrypted)
-- **Worker files + password** → Yes (worker funds only)
-- **Queen wallet** → Yes (all funds)
-
-**Mitigation:**
-- Strong, unique password
-- Secure server
-- Regular reclaims
-- Limited worker balances
-
-### Should I use a hardware wallet?
-
-**For queen wallet:** Highly recommended for large amounts
-
-**For workers:** Not practical (automated signing needed)
-
-**Setup:**
-1. Create queen on hardware wallet
-2. Transfer funds to queen
-3. Fund swarm from queen
-4. Keep hardware wallet offline
-
----
-
-## Performance & Scaling
-
-### How many workers can I run?
-
-**Practical limits:**
-
-| Setup | Max Workers | Notes |
-|-------|-------------|-------|
-| Single machine | 10-20 | Resource limits |
-| VPS (2 vCPU) | 20-30 | Network limits |
-| Dedicated server | 50-100 | RPC rate limits |
-| Distributed | 100+ | Multiple RPCs needed |
-
-### How much volume can a swarm generate?
-
-**Example (10 workers):**
-
-| Setting | Daily Volume | Gas Cost |
-|---------|--------------|----------|
-| 0.002 ETH × 10 buys × 12 cycles | ~$720 | ~$0.07 |
-| 0.005 ETH × 10 buys × 12 cycles | ~$1,800 | ~$0.07 |
-| 0.01 ETH × 10 buys × 12 cycles | ~$3,600 | ~$0.07 |
-
-### Can I run swarms on multiple servers?
-
-Yes, but each server needs:
-- Its own swarm configuration
-- Different queen wallet (or careful nonce management)
-- Independent monitoring
-
-**Not recommended for beginners.**
-
-### How do I optimize gas costs?
-
-1. **Choose efficient RPC:** Low latency = fewer retries
-2. **Set appropriate gas limits:** Not too high, not too low
-3. **Trade during low congestion:** Gas prices vary
-4. **Batch operations:** Fund/reclaim efficiently
-
-```bash
-# Check gas prices
-python swarm.py network-status
-
-# Adjust settings
-python swarm.py config my_swarm set max_gas_gwei 0.5
-```
-
----
-
-## Advanced
-
-### Can I integrate with my own software?
-
-Yes! Use the Python API:
-
-```python
-from swarm_manager import SwarmManager
-
-manager = SwarmManager()
-swarm = manager.get_swarm("my_swarm")
-
-# Custom logic
-for worker in swarm.workers:
-    if worker.balance_eth < 0.001:
-        manager.fund_worker(swarm.name, worker.name)
-```
-
-See [API Reference](./API_REFERENCE.md) for details.
-
-### Can I run swarms programmatically?
-
-Yes:
-
-```python
-from swarm_manager import SwarmManager, StartOptions
-
-manager = SwarmManager()
-
-# Schedule start
-import schedule
-import time
-
-def start_trading():
-    manager.start_swarm("my_swarm")
-
-def stop_and_reclaim():
-    manager.stop_swarm("my_swarm")
-    manager.reclaim_swarm("my_swarm")
-
-schedule.every().day.at("09:00").do(start_trading)
-schedule.every().day.at("17:00").do(stop_and_reclaim)
-
-while True:
-    schedule.run_pending()
-    time.sleep(60)
-```
-
-### Can I simulate without real trades?
-
-Yes, use dry-run mode:
-
-```bash
-python swarm.py start my_swarm --dry-run
-```
-
-Or in config:
-```yaml
-trading:
-  dry_run: true
-```
-
-### How do I export data?
-
-```bash
-# CSV export
-python swarm.py export my_swarm --format csv --output trades.csv
-
-# JSON export
-python swarm.py export my_swarm --format json --output trades.json
-
-# Specific date range
-python swarm.py export my_swarm \
-  --from "2025-01-01" \
-  --to "2025-01-31" \
-  --format csv
-```
-
----
-
-## Still Have Questions?
-
-- 📖 Read the [Complete Guide](./SWARM_GUIDE.md)
-- 🎓 Follow the [Tutorial](./TUTORIAL.md)
-- 🔒 Review [Security Guidelines](./SECURITY.md)
-- 📚 Check [API Reference](./API_REFERENCE.md)
-
----
-
-*Last updated: 2025-02-14*
+### Q: Bot hangs on "Connecting..."?
+**A:** RPC may be slow. Try:
+1. Wait 30 seconds
+2. Switch RPC in config
+3. Check your internet connection
+
+### Q: Transaction pending forever?
+**A:** Gas price may be too low. The bot will retry with higher gas.
+
+### Q: "replacement transaction underpriced"?
+**A:** Fixed in latest version. Update to latest commit.
+
+## Security Questions
+
+### Q: Can the developers steal my funds?
+**A:** No. The code is open source and:
+- Your keys are encrypted locally
+- No external servers receive your keys
+- Only you control your wallet
+
+### Q: Should I use this with my main wallet?
+**A:** No. Create a new wallet specifically for the bot. Only fund it with what you're willing to trade.
+
+### Q: Is the code audited?
+**A:** Yes, see SECURITY_AUDIT_REPORT.md. Grade: B+ (Good with minor improvements).
+
+### Q: What if I forget my password?
+**A:** There is no password recovery. You'll need to:
+1. Create new wallet
+2. Transfer funds manually
+3. Import private key if you saved it
+
+## Support
+
+### Q: Where can I get help?
+**A:** 
+- GitHub Issues: https://github.com/kabbalahmonster/base-volume-bot/issues
+- Check docs/ folder for detailed guides
+- Review error messages carefully
+
+### Q: I found a bug, what should I do?
+**A:** 
+1. Check if it's already reported on GitHub
+2. Create a new issue with:
+   - What you were doing
+   - Error message
+   - Your config (remove API keys)
+
+### Q: Can I contribute to the project?
+**A:** Yes! Pull requests welcome:
+- Bug fixes
+- Documentation
+- New features
+- Testing
+
+## Advanced Questions
+
+### Q: Can I modify the trading strategy?
+**A:** Yes, edit `bot.py`. The main logic is in `execute_buy()` and `execute_sell()`.
+
+### Q: Can I add a new DEX?
+**A:** Yes, see ROUTERS.md for instructions on adding custom routers.
+
+### Q: Can I run this on a server?
+**A:** Yes. Use the systemd service file or Docker.
+
+### Q: Can I use a hardware wallet?
+**A:** Not directly. You'd need to modify the code to use Web3.py with hardware wallet support.
+
+## Roadmap Questions
+
+### Q: What's next for the bot?
+**A:** Priorities:
+1. Direct V4 Universal Router support
+2. Better logging and monitoring
+3. Web dashboard
+4. Multi-wallet support
+
+### Q: Will you add other chains?
+**A:** Possible. The code is designed to be chain-agnostic. Priority chains:
+- Ethereum mainnet
+- Arbitrum
+- Optimism
+
+### Q: Will you add limit orders?
+**A:** Possible future feature. Would require off-chain order monitoring.

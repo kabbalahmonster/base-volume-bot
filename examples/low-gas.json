@@ -1,0 +1,20 @@
+{
+  "_comment": "Low-Gas Configuration - Optimized for minimal gas costs.",
+  "chain": "base",
+  "buy_amount_eth": 0.002,
+  "buy_interval_minutes": 10,
+  "sell_after_buys": 15,
+  "slippage_percent": 2.0,
+  "max_gas_gwei": 0.2,
+  "min_eth_balance": 0.01,
+  "reserve_eth": 0.005,
+  "dex_router": "uniswap_v4",
+  "gas_price_strategy": "conservative",
+  "gas_limit_buffer": 1.1,
+  "dry_run": false,
+  "log_level": "INFO",
+  "max_retries": 3,
+  "retry_delay_seconds": 10,
+  "max_daily_trades": 200,
+  "health_check_interval": 120
+}

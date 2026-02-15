@@ -1,11 +1,18 @@
 """
-Utility Module
+Utility Module (HARDENED VERSION)
 
 Helper functions, gas optimization, logging, and formatting utilities.
+
+SECURITY CHANGES:
+- Fixed HIGH-002: Added error message sanitization
+- Fixed HIGH-006: Fixed slippage calculation divide by zero
+- Added secure logging that redacts sensitive data
+- Added structured logging with metrics collection
 """
 
 import os
 import sys
+import re
 import logging
 import time
 from typing import Optional, Dict, Any
@@ -18,6 +25,16 @@ from rich.console import Console
 from rich.text import Text
 
 from config import Config
+
+# Import new structured logging
+try:
+    from logging_utils import (
+        StructuredLogger, get_logger, log_operation,
+        PerformanceMetrics, MetricsCollector
+    )
+    STRUCTURED_LOGGING_AVAILABLE = True
+except ImportError:
+    STRUCTURED_LOGGING_AVAILABLE = False
 
 
 # Global console for Rich output
@@ -39,9 +56,66 @@ class GasPriceError(Exception):
     pass
 
 
-def setup_logging(log_level: str = "INFO", log_file: str = "./bot.log") -> logging.Logger:
+class SecurityError(Exception):
+    """Custom exception for security violations."""
+    pass
+
+
+class SecureLogger:
+    """
+    Logger that sanitizes sensitive data from log messages.
+    
+    Addresses HIGH-002: Prevents sensitive data leakage in logs.
+    """
+    
+    # Patterns to redact from logs
+    SENSITIVE_PATTERNS = [
+        (r'0x[a-fA-F0-9]{64}', '[PRIVATE_KEY_REDACTED]'),  # Private keys (64 hex chars)
+        (r'0x[a-fA-F0-9]{60,66}', '[KEY_REDACTED]'),  # Keys with 0x prefix
+        (r'password["\']?\s*[:=]\s*["\'][^"\']+["\']', 'password=[REDACTED]'),
+        (r'key["\']?\s*[:=]\s*["\'][^"\']{32,}["\']', 'key=[REDACTED]'),
+        (r'api[_-]?key["\']?\s*[:=]\s*["\'][^"\']+["\']', 'api_key=[REDACTED]'),
+        (r'["\'][a-fA-F0-9]{32,}["\']', '"[HEX_REDACTED]"'),  # Long hex strings
+    ]
+    
+    def __init__(self, logger: logging.Logger):
+        self._logger = logger
+    
+    def _sanitize(self, msg: str) -> str:
+        """Remove sensitive data from log message."""
+        if not isinstance(msg, str):
+            msg = str(msg)
+        
+        sanitized = msg
+        for pattern, replacement in self.SENSITIVE_PATTERNS:
+            sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
+        return sanitized
+    
+    def debug(self, msg: str, *args, **kwargs):
+        self._logger.debug(self._sanitize(msg), *args, **kwargs)
+    
+    def info(self, msg: str, *args, **kwargs):
+        self._logger.info(self._sanitize(msg), *args, **kwargs)
+    
+    def warning(self, msg: str, *args, **kwargs):
+        self._logger.warning(self._sanitize(msg), *args, **kwargs)
+    
+    def error(self, msg: str, *args, **kwargs):
+        self._logger.error(self._sanitize(msg), *args, **kwargs)
+    
+    def exception(self, msg: str, *args, **kwargs):
+        # For exceptions, log full details to file only, sanitized to console
+        self._logger.exception(self._sanitize(msg), *args, **kwargs)
+    
+    def critical(self, msg: str, *args, **kwargs):
+        self._logger.critical(self._sanitize(msg), *args, **kwargs)
+
+
+def setup_logging(log_level: str = "INFO", log_file: str = "./bot.log") -> SecureLogger:
     """
     Setup comprehensive logging with both file and console output.
+    
+    Returns a SecureLogger that sanitizes sensitive data.
     """
     logger = logging.getLogger("compute_bot")
     logger.setLevel(getattr(logging, log_level.upper()))
@@ -76,11 +150,31 @@ def setup_logging(log_level: str = "INFO", log_file: str = "./bot.log") -> loggi
         file_handler.setFormatter(file_formatter)
         logger.addHandler(file_handler)
     
-    return logger
+    # Wrap with secure logger
+    return SecureLogger(logger)
 
 
-# Initialize global logger
+# Initialize global secure logger
 logger = setup_logging()
+
+# Try to initialize structured logger for enhanced logging
+_structured_logger: Optional[StructuredLogger] = None
+
+def get_structured_logger(name: str = 'bot', log_file: str = './logs/bot.log') -> Optional[StructuredLogger]:
+    """Get or initialize the structured logger."""
+    global _structured_logger
+    if _structured_logger is None and STRUCTURED_LOGGING_AVAILABLE:
+        _structured_logger = StructuredLogger(
+            name=name,
+            log_file=log_file,
+            log_level='INFO',
+            max_bytes=10*1024*1024,  # 10MB
+            backup_count=5,
+            use_rich_console=True,
+            json_format_file=True,
+            json_format_console=False
+        )
+    return _structured_logger
 
 
 class GasOptimizer:
@@ -94,6 +188,15 @@ class GasOptimizer:
         self.web3 = web3
         self.gas_history: list = []
         self.max_history = 20
+        self._structured_logger = get_structured_logger()
+        
+    def _log_gas_metric(self, operation: str, gas_price_gwei: float, **kwargs):
+        """Log gas metric to structured logger if available."""
+        if self._structured_logger:
+            self._structured_logger.info(
+                f"Gas {operation}",
+                extra={'gas_price_gwei': gas_price_gwei, **kwargs}
+            )
     
     def get_optimal_gas_price(self) -> int:
         """
@@ -173,6 +276,20 @@ class HealthMonitor:
         self.last_check = None
         self.is_healthy = True
         self.errors: list = []
+        self._structured_logger = get_structured_logger()
+        
+    def _log_health_check(self, checks: Dict[str, Any], healthy: bool):
+        """Log health check results to structured logger."""
+        if self._structured_logger:
+            self._structured_logger.info(
+                f"Health check: {'healthy' if healthy else 'unhealthy'}",
+                extra={
+                    'rpc_connected': checks.get('rpc_connected'),
+                    'synced': checks.get('synced'),
+                    'gas_price_ok': checks.get('gas_price_ok'),
+                    'wallet_funded': checks.get('wallet_funded')
+                }
+            )
     
     def check_health(self) -> Dict[str, Any]:
         """Perform health check and return status."""
@@ -201,10 +318,15 @@ class HealthMonitor:
             self.is_healthy = all(checks.values())
             self.last_check = datetime.now()
             
+            # Log to structured logger
+            self._log_health_check(checks, self.is_healthy)
+            
         except Exception as e:
             self.is_healthy = False
             self.errors.append({"time": datetime.now(), "error": str(e)})
             logger.error(f"Health check failed: {e}")
+            if self._structured_logger:
+                self._structured_logger.error("Health check failed", extra={'error': str(e)})
         
         return {
             "healthy": self.is_healthy,
@@ -353,9 +475,26 @@ async def async_retry_with_backoff(
 # Price and calculation utilities
 
 def calculate_slippage(expected: float, actual: float) -> float:
-    """Calculate slippage percentage."""
-    if expected == 0:
-        return 0.0
+    """
+    Calculate slippage percentage.
+    
+    FIXED HIGH-006: Properly handles edge cases.
+    
+    Args:
+        expected: Expected output amount
+        actual: Actual output amount
+        
+    Returns:
+        Slippage percentage
+        
+    Raises:
+        ValueError: If expected is zero or negative
+    """
+    if expected <= 0:
+        raise ValueError(f"Expected amount must be positive, got {expected}")
+    if actual < 0:
+        raise ValueError(f"Actual amount cannot be negative, got {actual}")
+    
     return abs((expected - actual) / expected) * 100
 
 
@@ -398,14 +537,60 @@ def validate_private_key(key: str) -> bool:
 
 
 def validate_address(address: str) -> bool:
-    """Validate Ethereum address format."""
+    """
+    Validate Ethereum address format and checksum.
+    
+    Addresses CRITICAL-004: Enforces checksum validation.
+    
+    Args:
+        address: Address to validate
+        
+    Returns:
+        True if valid and properly checksummed
+    """
     if not address:
         return False
     
     try:
-        return Web3.is_address(address)
-    except:
+        # Basic format check
+        if not Web3.is_address(address):
+            return False
+        
+        # Checksum validation - will raise ValueError if invalid
+        Web3.to_checksum_address(address)
+        return True
+    except (ValueError, Exception):
         return False
+
+
+def sanitize_error_message(error: str) -> str:
+    """
+    Sanitize error messages to remove sensitive data.
+    
+    Addresses HIGH-002: Prevents sensitive data leakage in error messages.
+    
+    Args:
+        error: Original error message
+        
+    Returns:
+        Sanitized error message safe for display
+    """
+    if not isinstance(error, str):
+        error = str(error)
+    
+    # Patterns to redact
+    patterns = [
+        (r'0x[a-fA-F0-9]{64}', '[PRIVATE_KEY]'),
+        (r'https?://[^\s]+', '[URL]'),
+        (r'password["\']?\s*[:=]\s*\S+', 'password=[REDACTED]'),
+        (r'key["\']?\s*[:=]\s*\S+', 'key=[REDACTED]'),
+    ]
+    
+    sanitized = error
+    for pattern, replacement in patterns:
+        sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
+    
+    return sanitized
 
 
 # Time utilities

@@ -1,0 +1,20 @@
+{
+  "_comment": "Aggressive Configuration - High frequency, high volume trading.",
+  "chain": "base",
+  "buy_amount_eth": 0.01,
+  "buy_interval_minutes": 2,
+  "sell_after_buys": 5,
+  "slippage_percent": 3.0,
+  "max_gas_gwei": 1.0,
+  "min_eth_balance": 0.05,
+  "reserve_eth": 0.02,
+  "dex_router": "1inch",
+  "dry_run": false,
+  "log_level": "INFO",
+  "max_retries": 5,
+  "retry_delay_seconds": 3,
+  "gas_price_strategy": "aggressive",
+  "max_daily_trades": 2000,
+  "health_check_interval": 30,
+  "concurrent_transactions": 1
+}

@@ -34,11 +34,12 @@ from rich import box
 from rich.logging import RichHandler
 
 # Import wallet and DEX routers
-from wallet import SecureKeyManager, SecureWallet
+from wallet import SecureKeyManager, SecureWallet, WalletSession
 from oneinch_router import OneInchAggregator
 from dex_router import MultiDEXRouter
 from zerox_router import ZeroXAggregator
 from v4_router import V4DirectRouter
+from utils import validate_address, sanitize_error_message, SecurityError
 
 # Constants
 COMPUTE_TOKEN = "0x696381f39F17cAD67032f5f52A4924ce84e51BA3"
@@ -286,7 +287,14 @@ class VolumeBot:
         return Decimal(balance) / Decimal(10 ** decimals)
     
     def execute_buy(self) -> bool:
-        """Execute buy transaction"""
+        """
+        Execute buy transaction with security validations.
+        
+        Security features:
+        - HIGH-004: Confirmation for high-value transactions
+        - HIGH-002: Sanitized error messages
+        - Input validation for amounts
+        """
         self.buy_count += 1
         
         console.print(f"\n[bold cyan]🛒 Buy Attempt {self.buy_count}/{self.config.sell_after_buys}[/bold cyan]")
@@ -300,11 +308,32 @@ class VolumeBot:
         try:
             amount_eth = Decimal(str(self.config.buy_amount_eth))
             
+            # Validate amount is positive and reasonable
+            if amount_eth <= 0:
+                console.print("[red]✗ Buy amount must be positive[/red]")
+                return False
+            if amount_eth > 10:
+                console.print("[red]✗ Buy amount seems unreasonably high (>10 ETH)[/red]")
+                return False
+            
             # Check balance
             eth_balance = self.get_eth_balance()
             if eth_balance < amount_eth:
                 console.print(f"[red]✗ Insufficient ETH balance[/red]")
                 return False
+            
+            # HIGH-004 FIX: Confirmation for high-value transactions
+            high_value_threshold = getattr(self.config, 'high_value_threshold_eth', 0.5)
+            if amount_eth >= high_value_threshold:
+                console.print(f"\n[yellow]⚠️  HIGH VALUE TRANSACTION WARNING[/yellow]")
+                console.print(f"   Amount: {amount_eth} ETH")
+                console.print(f"   Token: ${self.token_symbol}")
+                console.print(f"   Threshold: {high_value_threshold} ETH")
+                
+                confirm = input("\nType 'CONFIRM' to proceed with this high-value transaction: ")
+                if confirm != "CONFIRM":
+                    console.print("[yellow]⚠️ Transaction cancelled by user[/yellow]")
+                    return False
             
             # Try 0x first if API key is configured, then 1inch, then multi-DEX
             use_zerox = hasattr(self.config, 'zerox_api_key') and self.config.zerox_api_key
@@ -319,7 +348,9 @@ class VolumeBot:
                     slippage_percent=self.config.slippage_percent
                 )
                 if not success:
-                    console.print(f"[yellow]⚠ 0x failed: {result}[/yellow]")
+                    # HIGH-002 FIX: Sanitize error message
+                    safe_error = sanitize_error_message(result)
+                    console.print(f"[yellow]⚠ 0x failed: {safe_error}[/yellow]")
                     console.print(f"[dim]Falling back...[/dim]")
                 else:
                     console.print(f"[green]✓ Buy successful via 0x![/green]")
@@ -336,7 +367,9 @@ class VolumeBot:
                     slippage_percent=self.config.slippage_percent
                 )
                 if not success:
-                    console.print(f"[yellow]⚠ 1inch failed: {result}[/yellow]")
+                    # HIGH-002 FIX: Sanitize error message
+                    safe_error = sanitize_error_message(result)
+                    console.print(f"[yellow]⚠ 1inch failed: {safe_error}[/yellow]")
                     console.print(f"[dim]Falling back to multi-DEX router...[/dim]")
                 else:
                     console.print(f"[green]✓ Buy successful via 1inch![/green]")
@@ -360,13 +393,17 @@ class VolumeBot:
                 self.total_bought_eth += amount_eth
                 return True
             else:
-                console.print(f"[red]✗ Transaction failed: {result}[/red]")
+                # HIGH-002 FIX: Sanitize error message
+                safe_error = sanitize_error_message(result)
+                console.print(f"[red]✗ Transaction failed: {safe_error}[/red]")
                 self.failed_buys += 1
                 return False
                 
         except Exception as e:
+            # HIGH-002 FIX: Log full error, show sanitized to user
             self.logger.error(f"Buy error: {e}")
-            console.print(f"[red]✗ Buy failed: {e}[/red]")
+            safe_error = sanitize_error_message(str(e))
+            console.print(f"[red]✗ Buy failed: {safe_error}[/red]")
             self.failed_buys += 1
             return False
     
@@ -716,15 +753,20 @@ def setup_command():
         console.print("="*60)
 
 
-def run_command(dry_run: bool = False, token_address: str = COMPUTE_TOKEN):
-    """Run the bot"""
+def run_command(dry_run: bool = False, token_address: str = COMPUTE_TOKEN, 
+                config_path: str = "bot_config.json", verbose: bool = False):
+    """Run the bot with improved UX"""
     # Load config
     try:
-        with open("bot_config.json", 'r') as f:
+        with open(config_path, 'r') as f:
             config_data = json.load(f)
         config = BotConfig.from_dict(config_data)
     except FileNotFoundError:
-        console.print("[red]Config not found. Run 'setup' first.[/red]")
+        console.print(f"[red]❌ Config not found: {config_path}[/red]")
+        console.print("[yellow]💡 Run 'python bot.py setup' first to create config[/yellow]")
+        return
+    except json.JSONDecodeError:
+        console.print(f"[red]❌ Invalid JSON in config file: {config_path}[/red]")
         return
     
     # Get password and load key
@@ -785,93 +827,245 @@ def withdraw_command(to_address: str, amount: Optional[float] = None,
     bot.withdraw(to_address, amount, withdraw_compute)
 
 
-def balance_command():
-    """Check wallet balances"""
+def balance_command(config_path: str = "bot_config.json"):
+    """Check wallet balances with improved display"""
+    # Print section header
+    console.print("\n[bold cyan]💰 Wallet Balance Check[/bold cyan]")
+    console.print("─" * 50)
+    
     # Load config
     try:
-        with open("bot_config.json", 'r') as f:
+        with open(config_path, 'r') as f:
             config_data = json.load(f)
         config = BotConfig.from_dict(config_data)
+        console.print(f"[green]✓[/green] Config loaded: [dim]{config_path}[/dim]")
     except FileNotFoundError:
-        console.print("[red]Config not found. Run 'setup' first.[/red]")
+        console.print(f"[red]❌ Config not found: {config_path}[/red]")
+        console.print("[yellow]💡 Run 'python bot.py setup' first[/yellow]")
+        return
+    except json.JSONDecodeError:
+        console.print(f"[red]❌ Invalid JSON in config file: {config_path}[/red]")
         return
     
     # Get password and load key
     console.print("[yellow]Enter wallet password:[/yellow]")
     password = getpass.getpass("> ")
     
-    key_manager = SecureKeyManager()
-    private_key = key_manager.load_and_decrypt(password)
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console
+    ) as progress:
+        task = progress.add_task("🔐 Decrypting wallet...", total=None)
+        key_manager = SecureKeyManager()
+        private_key = key_manager.load_and_decrypt(password)
+        progress.update(task, completed=True)
     
     if not private_key:
-        console.print("[red]Failed to decrypt wallet. Wrong password?[/red]")
+        console.print("[red]❌ Failed to decrypt wallet. Wrong password?[/red]")
         return
+    
+    console.print("[green]✓[/green] Wallet decrypted successfully")
     
     # Initialize bot
-    bot = VolumeBot(config, private_key)
-    if not bot.connect():
-        return
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console
+    ) as progress:
+        task = progress.add_task("🔗 Connecting to Base network...", total=None)
+        bot = VolumeBot(config, private_key)
+        if not bot.connect():
+            console.print("[red]❌ Failed to connect to network[/red]")
+            return
+        progress.update(task, completed=True)
+    
+    console.print("[green]✓[/green] Connected to Base network")
     
     # Show balances
-    console.print("\n[bold cyan]💰 Wallet Balances[/bold cyan]")
-    console.print(f"[dim]Address: {bot.account.address}[/dim]\n")
+    console.print("\n[bold cyan]📊 Current Balances[/bold cyan]")
     
-    table = Table(box=box.ROUNDED)
-    table.add_column("Asset", style="cyan")
-    table.add_column("Balance", style="green")
+    table = Table(box=box.ROUNDED, show_header=True)
+    table.add_column("Asset", style="cyan", width=15)
+    table.add_column("Balance", style="green", width=20)
+    table.add_column("Status", style="dim", width=15)
     
     eth_balance = bot.get_eth_balance()
     compute_balance = bot.get_token_balance()
     
-    # Get token symbol from bot if possible, else default
+    # Get token symbol
     token_symbol = "COMPUTE"
     if bot.token_symbol:
         token_symbol = bot.token_symbol
     
-    table.add_row("ETH", f"{eth_balance:.6f}")
-    table.add_row(f"${token_symbol}", f"{compute_balance:.6f}")
+    # Determine status
+    eth_status = "✓ Funded" if eth_balance > 0.01 else "⚠️ Low"
+    token_status = "✓ Holdings" if compute_balance > 0 else "— Empty"
+    
+    table.add_row("ETH", f"{eth_balance:.6f}", eth_status)
+    table.add_row(f"${token_symbol}", f"{compute_balance:.6f}", token_status)
     
     console.print(table)
+    
+    # Show wallet address
+    console.print(f"\n[dim]Wallet Address: {bot.account.address}[/dim]")
+    
+    # Recommendations
+    if eth_balance < 0.01:
+        console.print("\n[yellow]⚠️  Low ETH balance. Fund wallet to start trading.[/yellow]")
+    else:
+        console.print("\n[green]✓ Wallet ready for trading![/green]")
 
 
 def main():
     import argparse
     
-    parser = argparse.ArgumentParser(description="Volume Bot for Base Network")
+    # Custom formatter for better help output
+    class CustomHelpFormatter(argparse.HelpFormatter):
+        def __init__(self, prog):
+            super().__init__(prog, max_help_position=40, width=100)
+    
+    parser = argparse.ArgumentParser(
+        description="🤖 $COMPUTE Volume Bot - Automated trading for Base Network",
+        formatter_class=CustomHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s setup                    # Initialize wallet and config
+  %(prog)s run --dry-run            # Test mode (no real trades)
+  %(prog)s run                      # Start live trading
+  %(prog)s balance                  # Check wallet balances
+  %(prog)s withdraw 0x... --amount 0.5   # Withdraw 0.5 ETH
+  %(prog)s withdraw 0x... --compute      # Withdraw ETH + all tokens
+
+Documentation: https://github.com/kabbalahmonster/base-volume-bot/tree/main/docs
+        """
+    )
+    
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
     
     # Setup command
-    setup_parser = subparsers.add_parser("setup", help="Initialize wallet and config")
+    setup_parser = subparsers.add_parser(
+        "setup", 
+        help="🔐 Initialize encrypted wallet and configuration",
+        description="Generate a new encrypted wallet and create default configuration."
+    )
     
     # Run command
-    run_parser = subparsers.add_parser("run", help="Start trading bot")
-    run_parser.add_argument("--dry-run", action="store_true", help="Simulation mode")
-    run_parser.add_argument("--token-address", type=str, default=COMPUTE_TOKEN, 
-                           help=f"Token address to trade (default: {COMPUTE_TOKEN})")
+    run_parser = subparsers.add_parser(
+        "run", 
+        help="▶️  Start the trading bot",
+        description="Start automated trading with configured settings."
+    )
+    run_parser.add_argument(
+        "--dry-run", 
+        action="store_true", 
+        help="🧪 Simulation mode - no real transactions (default: %(default)s)"
+    )
+    run_parser.add_argument(
+        "--config", 
+        type=str, 
+        default="bot_config.json",
+        help="📄 Custom config file path (default: %(default)s)"
+    )
+    run_parser.add_argument(
+        "--token-address", 
+        type=str, 
+        default=COMPUTE_TOKEN, 
+        help=f"🪙 Token contract address (default: {COMPUTE_TOKEN[:20]}...)"
+    )
+    run_parser.add_argument(
+        "--verbose", "-v",
+        action="store_true", 
+        help="📢 Enable verbose logging"
+    )
     
     # Withdraw command
-    withdraw_parser = subparsers.add_parser("withdraw", help="Withdraw funds")
-    withdraw_parser.add_argument("to", help="Destination wallet address")
-    withdraw_parser.add_argument("--amount", type=float, help="ETH amount (omit for all)")
-    withdraw_parser.add_argument("--compute", action="store_true", help="Also withdraw all tokens")
-    withdraw_parser.add_argument("--dry-run", action="store_true", help="Simulation mode")
+    withdraw_parser = subparsers.add_parser(
+        "withdraw", 
+        help="💸 Withdraw funds to external wallet",
+        description="Withdraw ETH and/or tokens to a specified address."
+    )
+    withdraw_parser.add_argument(
+        "to", 
+        help="📍 Destination wallet address (0x...)"
+    )
+    withdraw_parser.add_argument(
+        "--amount", 
+        type=float, 
+        help="💰 ETH amount to withdraw (omit for all except reserve)"
+    )
+    withdraw_parser.add_argument(
+        "--compute", 
+        action="store_true", 
+        help="🪙 Also withdraw all tokens"
+    )
+    withdraw_parser.add_argument(
+        "--dry-run", 
+        action="store_true", 
+        help="🧪 Simulation mode - no real transactions"
+    )
     
     # Balance command
-    balance_parser = subparsers.add_parser("balance", help="Check wallet balances")
+    balance_parser = subparsers.add_parser(
+        "balance", 
+        help="💰 Display wallet balances",
+        description="Show current ETH and token balances."
+    )
+    balance_parser.add_argument(
+        "--config",
+        type=str,
+        default="bot_config.json",
+        help="📄 Custom config file path (default: %(default)s)"
+    )
+    
+    # Version flag
+    parser.add_argument(
+        "--version", 
+        action="version", 
+        version="%(prog)s 1.0.0"
+    )
     
     args = parser.parse_args()
+    
+    # Print banner if no command
+    if not args.command:
+        print_banner()
+        parser.print_help()
+        return
     
     if args.command == "setup":
         setup_command()
     elif args.command == "run":
-        run_command(dry_run=args.dry_run, token_address=args.token_address)
+        run_command(
+            dry_run=args.dry_run, 
+            token_address=args.token_address,
+            config_path=args.config,
+            verbose=args.verbose
+        )
     elif args.command == "withdraw":
-        withdraw_command(to_address=args.to, amount=args.amount, 
-                        withdraw_compute=args.compute, dry_run=args.dry_run)
+        withdraw_command(
+            to_address=args.to, 
+            amount=args.amount, 
+            withdraw_compute=args.compute, 
+            dry_run=args.dry_run
+        )
     elif args.command == "balance":
-        balance_command()
+        balance_command(config_path=args.config)
     else:
         parser.print_help()
+
+
+def print_banner():
+    """Print the CLI banner with styling."""
+    banner_text = """
+╔═══════════════════════════════════════════════════════════════╗
+║           🤖 $COMPUTE Volume Bot - Base Network                ║
+║                                                               ║
+║   Automated trading bot for generating token volume           ║
+║   Secure • Efficient • Open Source                            ║
+╚═══════════════════════════════════════════════════════════════╝
+    """
+    console.print(Panel(banner_text, style="bold cyan", box=box.DOUBLE))
 
 
 if __name__ == "__main__":

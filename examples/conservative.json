@@ -1,0 +1,19 @@
+{
+  "_comment": "Conservative Configuration - Low risk, slow trading. Recommended for beginners.",
+  "chain": "base",
+  "buy_amount_eth": 0.001,
+  "buy_interval_minutes": 15,
+  "sell_after_buys": 20,
+  "slippage_percent": 1.0,
+  "max_gas_gwei": 0.3,
+  "min_eth_balance": 0.02,
+  "reserve_eth": 0.01,
+  "dex_router": "uniswap_v3",
+  "dry_run": false,
+  "log_level": "INFO",
+  "max_retries": 3,
+  "retry_delay_seconds": 10,
+  "gas_price_strategy": "conservative",
+  "max_daily_trades": 100,
+  "health_check_interval": 300
+}
