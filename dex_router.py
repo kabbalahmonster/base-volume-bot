@@ -366,7 +366,21 @@ class MultiDEXRouter:
         best_dex = None
         best_liquidity = 0
         
-        # Try Uniswap V3 first (most reliable on Base)
+        # Try Uniswap V2 first - handles ETH natively without Permit2 issues
+        if "uniswap_v2" in self.routers:
+            try:
+                router = self.routers["uniswap_v2"]["contract"]
+                path = [self.weth, self.token_address]
+                amounts = router.functions.getAmountsOut(10**15, path).call()
+                if amounts and amounts[-1] > 0:
+                    best_dex = "uniswap_v2"
+                    best_liquidity = amounts[-1]
+                    print(f"[green]✓ Uniswap V2 has liquidity (output: {amounts[-1]})[/green]")
+                    # Store best and continue to check if V3 is better
+            except Exception as e:
+                print(f"[dim]  Uniswap V2: {e}[/dim]")
+        
+        # Try Uniswap V3 (may have better liquidity but requires Permit2)
         if "uniswap_v3" in self.routers:
             try:
                 # Check if V3 pool exists for any fee tier
@@ -421,20 +435,7 @@ class MultiDEXRouter:
         # Note: Aerodrome removed due to interface mismatch
         # To re-add: implement correct Solidly router ABI
         
-        # Try Uniswap V2 if Aerodrome failed
-        if not best_dex and "uniswap_v2" in self.routers:
-            try:
-                router = self.routers["uniswap_v2"]["contract"]
-                path = [self.weth, self.token_address]
-                amounts = router.functions.getAmountsOut(10**15, path).call()
-                if amounts and amounts[-1] > 0:
-                    best_dex = "uniswap_v2"
-                    best_liquidity = amounts[-1]
-                    print(f"[green]✓ Uniswap V2 has liquidity[/green]")
-            except Exception as e:
-                print(f"[dim]  Uniswap V2: {e}[/dim]")
-        
-        # Try BaseSwap
+        # Try BaseSwap if V2 not found
         if not best_dex and "baseswap" in self.routers:
             try:
                 router = self.routers["baseswap"]["contract"]
@@ -446,15 +447,6 @@ class MultiDEXRouter:
                     print(f"[green]✓ BaseSwap has liquidity[/green]")
             except Exception as e:
                 print(f"[dim]  BaseSwap: {e}[/dim]")
-        
-        # Try Uniswap V3 last (requires pool to exist at specific fee tier)
-        if not best_dex and "uniswap_v3" in self.routers:
-            try:
-                # For V3, we check if a pool exists by trying to call quoter
-                # This is a simplified check - in reality might need quoter contract
-                print(f"[yellow]⚠ Uniswap V3 pools not found or no liquidity[/yellow]")
-            except Exception as e:
-                print(f"[dim]  Uniswap V3: {e}[/dim]")
         
         self.best_dex = best_dex
         if best_dex:
