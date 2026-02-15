@@ -1077,17 +1077,24 @@ def simulate_command(token_address: str = COMPUTE_TOKEN, amount: float = 0.0005,
         console.print(f"[red]Missing dependency: {e}[/red]")
         return
     
-    # Setup (no wallet needed for simulation, but we need an address)
-    w3 = Web3()
+    # Setup - connect to RPC first (needed for RouterCodec)
+    console.print("[dim]Connecting to Base network...[/dim]")
+    w3 = None
+    for rpc_url in RPC_URLS.get("base", ["https://mainnet.base.org"]):
+        try:
+            w3 = Web3(Web3.HTTPProvider(rpc_url))
+            if w3.is_connected():
+                console.print(f"[green]✓ Connected to {rpc_url}[/green]")
+                break
+        except:
+            continue
+    
+    if not w3 or not w3.is_connected():
+        console.print("[red]✗ Failed to connect to any RPC[/red]")
+        return
+    
     # Use a dummy account for simulation (doesn't need funds)
     dummy_account = Account.create()
-    
-    # Initialize V4 router
-    v4_router = V4DirectRouter(w3, dummy_account)
-    
-    if not v4_router.has_library:
-        console.print("[red]V4 library not installed. Run: pip install uniswap-universal-router-decoder[/red]")
-        return
     
     # Build the swap (same as live)
     token_address = w3.to_checksum_address(token_address)
@@ -1118,8 +1125,8 @@ def simulate_command(token_address: str = COMPUTE_TOKEN, amount: float = 0.0005,
             'hooks': '0x0000000000000000000000000000000000000000'
         }
         
-        # Build using library
-        codec = RouterCodec()
+        # Build using library - MUST pass w3 to RouterCodec
+        codec = RouterCodec(w3=w3)
         chain = codec.encode.chain()
         
         # Wrap ETH
@@ -1188,28 +1195,14 @@ def simulate_command(token_address: str = COMPUTE_TOKEN, amount: float = 0.0005,
         console.print("     - take (to recipient wallet)")
         console.print()
         
-        # Eth call simulation (if requested and RPC available)
+        # Eth call simulation (if requested - w3 already connected)
         if eth_call:
             console.print("[bold cyan]📡 Running eth_call simulation...[/bold cyan]")
-            console.print("[dim]Note: eth_call requires a live RPC connection[/dim]\n")
-            
-            # Try to connect to RPC
-            w3_live = None
-            for rpc_url in RPC_URLS.get("base", ["https://mainnet.base.org"]):
-                try:
-                    w3_live = Web3(Web3.HTTPProvider(rpc_url))
-                    if w3_live.is_connected():
-                        break
-                except:
-                    continue
-            
-            if not w3_live or not w3_live.is_connected():
-                console.print("[yellow]⚠ No RPC connection available for eth_call[/yellow]")
-                return
+            console.print("[dim]Using existing RPC connection[/dim]\n")
             
             try:
                 # Run eth_call
-                result = w3_live.eth.call({
+                result = w3.eth.call({
                     'to': tx['to'],
                     'data': tx['data'],
                     'value': tx['value'],
