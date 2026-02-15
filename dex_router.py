@@ -151,7 +151,7 @@ UNISWAP_V2_ROUTER_ABI = [
     }
 ]
 
-# Uniswap V3 Router ABI (existing)
+# Uniswap V3 Router ABI (SwapRouter02 on Base)
 UNISWAP_V3_ROUTER_ABI = [
     {
         "inputs": [
@@ -174,6 +174,63 @@ UNISWAP_V3_ROUTER_ABI = [
         "name": "exactInputSingle",
         "outputs": [{"internalType": "uint256", "name": "amountOut", "type": "uint256"}],
         "stateMutability": "payable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"internalType": "bytes[]", "name": "data", "type": "bytes[]"}
+        ],
+        "name": "multicall",
+        "outputs": [{"internalType": "bytes[]", "name": "results", "type": "bytes[]"}],
+        "stateMutability": "payable",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "refundETH",
+        "outputs": [],
+        "stateMutability": "payable",
+        "type": "function"
+    }
+]
+
+# Uniswap V3 Factory ABI (for pool discovery)
+UNISWAP_V3_FACTORY_ABI = [
+    {
+        "inputs": [
+            {"internalType": "address", "name": "tokenA", "type": "address"},
+            {"internalType": "address", "name": "tokenB", "type": "address"},
+            {"internalType": "uint24", "name": "fee", "type": "uint24"}
+        ],
+        "name": "getPool",
+        "outputs": [{"internalType": "address", "name": "pool", "type": "address"}],
+        "stateMutability": "view",
+        "type": "function"
+    }
+]
+
+# Uniswap V3 Pool ABI (minimal for liquidity checks)
+UNISWAP_V3_POOL_ABI = [
+    {
+        "inputs": [],
+        "name": "liquidity",
+        "outputs": [{"internalType": "uint128", "name": "", "type": "uint128"}],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "slot0",
+        "outputs": [
+            {"internalType": "uint160", "name": "sqrtPriceX96", "type": "uint160"},
+            {"internalType": "int24", "name": "tick", "type": "int24"},
+            {"internalType": "uint16", "name": "observationIndex", "type": "uint16"},
+            {"internalType": "uint16", "name": "observationCardinality", "type": "uint16"},
+            {"internalType": "uint16", "name": "observationCardinalityNext", "type": "uint16"},
+            {"internalType": "uint8", "name": "feeProtocol", "type": "uint8"},
+            {"internalType": "bool", "name": "unlocked", "type": "bool"}
+        ],
+        "stateMutability": "view",
         "type": "function"
     }
 ]
@@ -288,14 +345,37 @@ class MultiDEXRouter:
         best_dex = None
         best_liquidity = 0
         
-        # Try Uniswap V4 first (latest, most liquidity on Base)
-        if "uniswap_v4" in self.routers:
+        # Try Uniswap V3 first (most reliable on Base)
+        if "uniswap_v3" in self.routers:
             try:
-                # For V4, we check if the router responds
-                router = self.routers["uniswap_v4"]["contract"]
-                # V4 uses execute() with encoded commands - simplified check
-                # Check if router has code
-                code = self.w3.eth.get_code(self.routers["uniswap_v4"]["config"]["router"])
+                # Check if V3 pool exists for any fee tier
+                factory = self.w3.eth.contract(
+                    address=self.w3.to_checksum_address(DEX_CONFIG["uniswap_v3"]["factory"]),
+                    abi=[{"inputs":[{"internalType":"address","name":"tokenA","type":"address"},{"internalType":"address","name":"tokenB","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"}],"name":"getPool","outputs":[{"internalType":"address","name":"pool","type":"address"}],"stateMutability":"view","type":"function"}]
+                )
+                
+                for fee in DEX_CONFIG["uniswap_v3"]["fee_tiers"]:
+                    try:
+                        pool_address = factory.functions.getPool(self.weth, self.token_address, fee).call()
+                        if pool_address and pool_address != "0x0000000000000000000000000000000000000000":
+                            # Pool exists - check if it has liquidity
+                            pool_code = self.w3.eth.get_code(pool_address)
+                            if len(pool_code) > 0:
+                                best_dex = "uniswap_v3"
+                                best_liquidity = 1  # Found a pool
+                                print(f"[green]✓ Uniswap V3 pool found (fee={fee})[/green]")
+                                break
+                    except:
+                        continue
+            except Exception as e:
+                print(f"[dim]  Uniswap V3: {e}[/dim]")
+
+        # Try Uniswap V4 (checksum fix applied)
+        if not best_dex and "uniswap_v4" in self.routers:
+            try:
+                # Check if router has code (using checksummed address)
+                router_addr = self.w3.to_checksum_address(self.routers["uniswap_v4"]["config"]["router"])
+                code = self.w3.eth.get_code(router_addr)
                 if len(code) > 0:
                     best_dex = "uniswap_v4"
                     best_liquidity = 1  # Mark as found
@@ -303,23 +383,8 @@ class MultiDEXRouter:
             except Exception as e:
                 print(f"[dim]  Uniswap V4: {e}[/dim]")
 
-        # Try Aerodrome (popular on Base)
-        if not best_dex and "aerodrome" in self.routers:
-            try:
-                router = self.routers["aerodrome"]["contract"]
-                # Try to get quote for small amount
-                path = [self.weth, self.token_address]
-                amounts = router.functions.getAmountsOut(
-                    10**15,  # 0.001 ETH
-                    path,
-                    False  # volatile pool (not stable)
-                ).call()
-                if amounts and amounts[-1] > 0:
-                    best_dex = "aerodrome"
-                    best_liquidity = amounts[-1]
-                    print(f"[green]✓ Aerodrome has liquidity[/green]")
-            except Exception as e:
-                print(f"[dim]  Aerodrome: {e}[/dim]")
+        # Note: Aerodrome removed due to interface mismatch
+        # To re-add: implement correct Solidly router ABI
         
         # Try Uniswap V2 if Aerodrome failed
         if not best_dex and "uniswap_v2" in self.routers:
@@ -425,9 +490,70 @@ class MultiDEXRouter:
                     return False, f"Transaction failed (status={receipt['status']})"
                     
             elif dex_config["type"] == "uniswap_v3":
-                # V3 swap (existing logic)
-                # ... implementation would go here
-                return False, "Uniswap V3 not yet implemented in MultiDEXRouter"
+                # V3 swap - find pool with best liquidity
+                factory = self.w3.eth.contract(
+                    address=self.w3.to_checksum_address(DEX_CONFIG["uniswap_v3"]["factory"]),
+                    abi=UNISWAP_V3_FACTORY_ABI
+                )
+                
+                best_pool = None
+                best_fee = None
+                best_liquidity = 0
+                
+                # Find pool with highest liquidity
+                for fee in DEX_CONFIG["uniswap_v3"]["fee_tiers"]:
+                    try:
+                        pool_address = factory.functions.getPool(self.weth, self.token_address, fee).call()
+                        if pool_address and pool_address != "0x0000000000000000000000000000000000000000":
+                            pool = self.w3.eth.contract(address=pool_address, abi=UNISWAP_V3_POOL_ABI)
+                            liquidity = pool.functions.liquidity().call()
+                            if liquidity > best_liquidity:
+                                best_liquidity = liquidity
+                                best_pool = pool_address
+                                best_fee = fee
+                    except:
+                        continue
+                
+                if not best_pool:
+                    return False, "No Uniswap V3 pool found with liquidity"
+                
+                # For V3, we need to estimate output
+                # Using a simplified approach - in production use QuoterV2
+                # Assume 0.5% slippage for min amount
+                min_out = 0  # Would use proper quoting in production
+                
+                deadline = int(self.w3.eth.get_block('latest')['timestamp']) + 300
+                
+                # Build V3 swap transaction
+                tx = router.functions.exactInputSingle({
+                    'tokenIn': self.weth,
+                    'tokenOut': self.token_address,
+                    'fee': best_fee,
+                    'recipient': self.account.address,
+                    'deadline': deadline,
+                    'amountIn': amount_in_wei,
+                    'amountOutMinimum': min_out,
+                    'sqrtPriceLimitX96': 0
+                }).build_transaction({
+                    'from': self.account.address,
+                    'value': amount_in_wei,
+                    'gas': 300000,
+                    'gasPrice': self.w3.eth.gas_price,
+                    'nonce': self.w3.eth.get_transaction_count(self.account.address),
+                    'chainId': 8453
+                })
+                
+                # Sign and send
+                signed = self.account.sign_transaction(tx)
+                tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+                
+                # Wait for receipt
+                receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+                
+                if receipt['status'] == 1:
+                    return True, self.w3.to_hex(tx_hash)
+                else:
+                    return False, f"Transaction failed (status={receipt['status']})"
 
             elif dex_config["type"] == "uniswap_v4":
                 # V4 swap - uses Universal Router with encoded commands
@@ -506,6 +632,76 @@ class MultiDEXRouter:
                 # Wait for receipt
                 receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
 
+                if receipt['status'] == 1:
+                    return True, self.w3.to_hex(tx_hash)
+                else:
+                    return False, f"Transaction failed (status={receipt['status']})"
+
+            elif dex_config["type"] == "uniswap_v3":
+                # V3 token->ETH swap
+                factory = self.w3.eth.contract(
+                    address=self.w3.to_checksum_address(DEX_CONFIG["uniswap_v3"]["factory"]),
+                    abi=UNISWAP_V3_FACTORY_ABI
+                )
+                
+                best_pool = None
+                best_fee = None
+                best_liquidity = 0
+                
+                for fee in DEX_CONFIG["uniswap_v3"]["fee_tiers"]:
+                    try:
+                        pool_address = factory.functions.getPool(self.token_address, self.weth, fee).call()
+                        if pool_address and pool_address != "0x0000000000000000000000000000000000000000":
+                            pool = self.w3.eth.contract(address=pool_address, abi=UNISWAP_V3_POOL_ABI)
+                            liquidity = pool.functions.liquidity().call()
+                            if liquidity > best_liquidity:
+                                best_liquidity = liquidity
+                                best_pool = pool_address
+                                best_fee = fee
+                    except:
+                        continue
+                
+                if not best_pool:
+                    return False, "No Uniswap V3 pool found with liquidity"
+                
+                # Approve router
+                approve_tx = self.token.functions.approve(
+                    dex_config["router"],
+                    amount_in_units
+                ).build_transaction({
+                    'from': self.account.address,
+                    'gas': 100000,
+                    'gasPrice': self.w3.eth.gas_price,
+                    'nonce': self.w3.eth.get_transaction_count(self.account.address),
+                    'chainId': 8453
+                })
+                
+                signed_approve = self.account.sign_transaction(approve_tx)
+                approve_hash = self.w3.eth.send_raw_transaction(signed_approve.raw_transaction)
+                self.w3.eth.wait_for_transaction_receipt(approve_hash, timeout=120)
+                
+                deadline = int(self.w3.eth.get_block('latest')['timestamp']) + 300
+                tx = router.functions.exactInputSingle({
+                    'tokenIn': self.token_address,
+                    'tokenOut': self.weth,
+                    'fee': best_fee,
+                    'recipient': self.account.address,
+                    'deadline': deadline,
+                    'amountIn': amount_in_units,
+                    'amountOutMinimum': 0,
+                    'sqrtPriceLimitX96': 0
+                }).build_transaction({
+                    'from': self.account.address,
+                    'gas': 300000,
+                    'gasPrice': self.w3.eth.gas_price,
+                    'nonce': self.w3.eth.get_transaction_count(self.account.address),
+                    'chainId': 8453
+                })
+                
+                signed = self.account.sign_transaction(tx)
+                tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+                receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+                
                 if receipt['status'] == 1:
                     return True, self.w3.to_hex(tx_hash)
                 else:
