@@ -483,12 +483,13 @@ class MultiDEXRouter:
                 
                 # Wait for receipt
                 receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-                
+                tx_hex = self.w3.to_hex(tx_hash)
+
                 if receipt['status'] == 1:
-                    return True, self.w3.to_hex(tx_hash)
+                    return True, tx_hex
                 else:
-                    return False, f"Transaction failed (status={receipt['status']})"
-                    
+                    return False, f"V2 swap failed (status={receipt['status']}) - TX: {tx_hex}"
+
             elif dex_config["type"] == "uniswap_v3":
                 # V3 swap - find pool with best liquidity
                 factory = self.w3.eth.contract(
@@ -549,21 +550,20 @@ class MultiDEXRouter:
                 
                 # Wait for receipt
                 receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-                
+                tx_hex = self.w3.to_hex(tx_hash)
+
                 if receipt['status'] == 1:
-                    return True, self.w3.to_hex(tx_hash)
+                    return True, tx_hex
                 else:
-                    return False, f"Transaction failed (status={receipt['status']})"
+                    return False, f"V3 ETH->Token failed (status={receipt['status']}) - TX: {tx_hex}"
 
             elif dex_config["type"] == "uniswap_v4":
                 # V4 swap - uses Universal Router with encoded commands
-                # This requires encoding swap commands for the V4 router
-                # For now, return error - full V4 implementation needs more work
-                return False, "Uniswap V4 execute() swap not yet fully implemented - needs encoded commands"
+                return False, "Uniswap V4 not implemented"
 
         except Exception as e:
             return False, f"Swap error: {e}"
-    
+
     def swap_tokens_for_eth(self, amount_tokens: Decimal, slippage_percent: float = 2.0) -> Tuple[bool, str]:
         """
         Swap tokens for ETH using the best available DEX.
@@ -628,14 +628,15 @@ class MultiDEXRouter:
                 # Sign and send
                 signed = self.account.sign_transaction(tx)
                 tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
-                
+
                 # Wait for receipt
                 receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+                tx_hex = self.w3.to_hex(tx_hash)
 
                 if receipt['status'] == 1:
-                    return True, self.w3.to_hex(tx_hash)
+                    return True, tx_hex
                 else:
-                    return False, f"Transaction failed (status={receipt['status']})"
+                    return False, f"V2 Token->ETH failed (status={receipt['status']}) - TX: {tx_hex}"
 
             elif dex_config["type"] == "uniswap_v3":
                 # V3 token->ETH swap
@@ -701,15 +702,15 @@ class MultiDEXRouter:
                 signed = self.account.sign_transaction(tx)
                 tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
                 receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-                
+                tx_hex = self.w3.to_hex(tx_hash)
+
                 if receipt['status'] == 1:
-                    return True, self.w3.to_hex(tx_hash)
+                    return True, tx_hex
                 else:
-                    return False, f"Transaction failed (status={receipt['status']})"
+                    return False, f"V3 Token->ETH failed (status={receipt['status']}) - TX: {tx_hex}"
 
             elif dex_config["type"] == "uniswap_v4":
-                # V4 swap - uses Universal Router with encoded commands
-                return False, "Uniswap V4 execute() swap not yet fully implemented - needs encoded commands"
+                return False, "Uniswap V4 not implemented"
 
         except Exception as e:
             return False, f"Swap error: {e}"
