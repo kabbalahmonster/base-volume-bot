@@ -23,8 +23,8 @@ WETH_BASE = "0x4200000000000000000000000000000000000006"
 # ETH placeholder for 0x API
 ETH_PLACEHOLDER = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"
 
-# 0x Allowance Holder address on Base
-ALLOWANCE_HOLDER = "0x000000000022d473030f116ddee9f6b43ac78ba3"
+# 0x Allowance Holder address on Base (checksummed)
+ALLOWANCE_HOLDER = Web3.to_checksum_address("0x000000000022d473030f116ddee9f6b43ac78ba3")
 
 ERC20_ABI = [
     {"constant": True, "inputs": [], "name": "decimals", "outputs": [{"name": "", "type": "uint8"}], "type": "function"},
@@ -179,14 +179,13 @@ class ZeroXAggregator:
             
             print(f"[green]✓ 0x route found![/green]")
             
-            # Get the allowance target from the quote
-            issues = quote.get('issues', {})
-            allowance_issue = issues.get('allowance', {})
-            allowance_target = allowance_issue.get('spender')
+            # Get the allowance target from the quote (with fallback)
+            issues = quote.get('issues') or {}
+            allowance_issue = issues.get('allowance') or {}
+            allowance_target = allowance_issue.get('spender') or quote.get('allowanceTarget') or ALLOWANCE_HOLDER
             
-            if not allowance_target:
-                print(f"[yellow]⚠ No allowance target in quote, using default[/yellow]")
-                allowance_target = ALLOWANCE_HOLDER
+            # CRITICAL: Checksum the address for web3.py
+            allowance_target = self.w3.to_checksum_address(allowance_target)
             
             print(f"[dim]  Allowance target: {allowance_target}[/dim]")
             
@@ -204,6 +203,10 @@ class ZeroXAggregator:
             
             if current_allowance < amount_units:
                 print(f"[dim]Approving {allowance_target[:20]}... to spend tokens...[/dim]")
+                
+                # Use 'pending' nonce to avoid conflicts
+                approve_nonce = self.w3.eth.get_transaction_count(self.account.address, 'pending')
+                
                 approve_tx = token_contract.functions.approve(
                     allowance_target,
                     amount_units
@@ -211,7 +214,7 @@ class ZeroXAggregator:
                     'from': self.account.address,
                     'gas': 100000,
                     'gasPrice': self.w3.eth.gas_price,
-                    'nonce': self.w3.eth.get_transaction_count(self.account.address),
+                    'nonce': approve_nonce,
                     'chainId': self.chain_id,
                 })
                 
@@ -221,6 +224,9 @@ class ZeroXAggregator:
                 print(f"[green]✓ Approved spender[/green]")
             else:
                 print(f"[dim]  Sufficient allowance already granted[/dim]")
+            
+            # Refresh nonce after approval (use 'pending' to get next available)
+            swap_nonce = self.w3.eth.get_transaction_count(self.account.address, 'pending')
             
             # Get transaction data from quote
             transaction = quote.get('transaction', {})
@@ -233,7 +239,7 @@ class ZeroXAggregator:
                 'value': int(transaction.get("value", 0)),
                 'gas': int(transaction.get("gas", 200000)),
                 'gasPrice': int(transaction.get("gasPrice", self.w3.eth.gas_price)),
-                'nonce': self.w3.eth.get_transaction_count(self.account.address),
+                'nonce': swap_nonce,  # Use refreshed nonce after approval
                 'chainId': self.chain_id,
             }
             
