@@ -419,10 +419,69 @@ Base network gas is typically 0.1-0.5 Gwei.
 ### Can I reduce gas costs?
 
 **Yes:**
-1. Use Uniswap V4 router (lowest gas)
+1. Use Uniswap V4 router (lowest gas) - Requires `uniswap-universal-router-decoder` library
 2. Increase `buy_interval_minutes`
 3. Trade during low-congestion periods
 4. Set `gas_price_strategy` to "conservative"
+
+---
+
+## V4 & COMPUTE Trading
+
+### What is V4 trading?
+
+Uniswap V4 is the latest version with:
+- **Singleton architecture** - All pools in one contract
+- **Flash accounting** - Internal balance tracking
+- **Hooks** - Customizable pool behavior
+- **Lower gas** - More efficient than V3
+
+### How do I trade COMPUTE (V4-only token)?
+
+**Install V4 support:**
+```bash
+pip install uniswap-universal-router-decoder
+```
+
+**Then run:**
+```bash
+python bot.py run --token-address 0x696381f39F17cAD67032f5f52A4924ce84e51BA3
+```
+
+The bot will automatically:
+1. Detect V4 pools
+2. Use the encoder library
+3. Execute proper V4 swaps
+
+### Which tokens work with V4?
+
+**V4-Only Tokens:**
+- $COMPUTE - Requires V4 router
+
+**V2/V3 Tokens:**
+- $BNKR - Works with Aerodrome (recommended)
+- Most other tokens - Use multi-DEX router
+
+### V4 vs V3 gas costs?
+
+| Router | Gas per Swap | Best For |
+|--------|-------------|----------|
+| V4 | ~50,000 | COMPUTE only |
+| V3 | ~150,000 | Deep liquidity tokens |
+| V2/Aerodrome | ~120,000 | BNKR and most tokens |
+
+### What if V4 swap fails?
+
+**Check:**
+1. Library installed: `pip show uniswap-universal-router-decoder`
+2. On correct branch: `feature/v4-universal-router`
+3. Have enough ETH for gas
+4. Token has V4 liquidity
+
+**If still failing:**
+- Use Aerodrome for BNKR instead
+- Wait for 0x aggregator V4 support
+- Check GitHub issues for updates
 
 ### Is there a fee to the developers?
 
