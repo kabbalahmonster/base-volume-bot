@@ -22,6 +22,13 @@ from eth_account import Account
 
 # DEX Configuration
 DEX_CONFIG = {
+    "uniswap_v4": {
+        "name": "Uniswap V4",
+        "router": "0x6c083A36F731eA994739eF5E8647D18553D41f76",  # Universal Router on Base
+        "factory": "0x1F98431c8aD98523631AE4a59f267346ea31F984",  # Pool manager
+        "type": "uniswap_v4",
+        "fee_tiers": [100, 500, 3000, 10000],
+    },
     "aerodrome": {
         "name": "Aerodrome",
         "router": "0xcF77a3Ba9A73CA43934ef2c5c9864A4c7B4bE323",
@@ -171,6 +178,31 @@ UNISWAP_V3_ROUTER_ABI = [
     }
 ]
 
+# Uniswap V4 Universal Router ABI (simplified)
+UNISWAP_V4_ROUTER_ABI = [
+    {
+        "inputs": [
+            {"internalType": "bytes", "name": "commands", "type": "bytes"},
+            {"internalType": "bytes[]", "name": "inputs", "type": "bytes[]"}
+        ],
+        "name": "execute",
+        "outputs": [],
+        "stateMutability": "payable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"internalType": "bytes", "name": "commands", "type": "bytes"},
+            {"internalType": "bytes[]", "name": "inputs", "type": "bytes[]"},
+            {"internalType": "uint256", "name": "deadline", "type": "uint256"}
+        ],
+        "name": "execute",
+        "outputs": [],
+        "stateMutability": "payable",
+        "type": "function"
+    }
+]
+
 # ERC20 ABI (minimal)
 ERC20_ABI = [
     {"constant": True, "inputs": [], "name": "decimals", "outputs": [{"name": "", "type": "uint8"}], "type": "function"},
@@ -196,18 +228,19 @@ class DEXQuote:
 class MultiDEXRouter:
     """
     Multi-DEX router that supports multiple DEXs and picks the best one.
-    
+
     Priority:
-    1. Aerodrome (most popular on Base)
-    2. Uniswap V3
-    3. Uniswap V2
-    4. BaseSwap
+    1. Uniswap V4 (latest, most liquidity)
+    2. Aerodrome (popular on Base)
+    3. Uniswap V3
+    4. Uniswap V2
+    5. BaseSwap
     """
-    
+
     def __init__(self, w3: Web3, account: Account, token_address: str):
         """
         Initialize multi-DEX router.
-        
+
         Args:
             w3: Web3 instance
             account: Account for signing
@@ -217,7 +250,7 @@ class MultiDEXRouter:
         self.account = account
         self.token_address = w3.to_checksum_address(token_address)
         self.weth = w3.to_checksum_address(WETH)
-        
+
         # Initialize routers
         self.routers = {}
         for dex_key, dex_info in DEX_CONFIG.items():
@@ -227,9 +260,11 @@ class MultiDEXRouter:
                 abi = UNISWAP_V2_ROUTER_ABI
             elif dex_info["type"] == "uniswap_v3":
                 abi = UNISWAP_V3_ROUTER_ABI
+            elif dex_info["type"] == "uniswap_v4":
+                abi = UNISWAP_V4_ROUTER_ABI
             else:
                 continue
-                
+
             self.routers[dex_key] = {
                 "contract": w3.eth.contract(
                     address=w3.to_checksum_address(dex_info["router"]),
@@ -253,8 +288,23 @@ class MultiDEXRouter:
         best_dex = None
         best_liquidity = 0
         
-        # Try Aerodrome first (most popular on Base)
-        if "aerodrome" in self.routers:
+        # Try Uniswap V4 first (latest, most liquidity on Base)
+        if "uniswap_v4" in self.routers:
+            try:
+                # For V4, we check if the router responds
+                router = self.routers["uniswap_v4"]["contract"]
+                # V4 uses execute() with encoded commands - simplified check
+                # Check if router has code
+                code = self.w3.eth.get_code(self.routers["uniswap_v4"]["config"]["router"])
+                if len(code) > 0:
+                    best_dex = "uniswap_v4"
+                    best_liquidity = 1  # Mark as found
+                    print(f"[green]✓ Uniswap V4 router found[/green]")
+            except Exception as e:
+                print(f"[dim]  Uniswap V4: {e}[/dim]")
+
+        # Try Aerodrome (popular on Base)
+        if not best_dex and "aerodrome" in self.routers:
             try:
                 router = self.routers["aerodrome"]["contract"]
                 # Try to get quote for small amount
@@ -378,7 +428,13 @@ class MultiDEXRouter:
                 # V3 swap (existing logic)
                 # ... implementation would go here
                 return False, "Uniswap V3 not yet implemented in MultiDEXRouter"
-            
+
+            elif dex_config["type"] == "uniswap_v4":
+                # V4 swap - uses Universal Router with encoded commands
+                # This requires encoding swap commands for the V4 router
+                # For now, return error - full V4 implementation needs more work
+                return False, "Uniswap V4 execute() swap not yet fully implemented - needs encoded commands"
+
         except Exception as e:
             return False, f"Swap error: {e}"
     
@@ -449,11 +505,15 @@ class MultiDEXRouter:
                 
                 # Wait for receipt
                 receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-                
+
                 if receipt['status'] == 1:
                     return True, self.w3.to_hex(tx_hash)
                 else:
                     return False, f"Transaction failed (status={receipt['status']})"
-            
+
+            elif dex_config["type"] == "uniswap_v4":
+                # V4 swap - uses Universal Router with encoded commands
+                return False, "Uniswap V4 execute() swap not yet fully implemented - needs encoded commands"
+
         except Exception as e:
             return False, f"Swap error: {e}"
