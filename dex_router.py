@@ -276,6 +276,16 @@ ERC20_ABI = [
     {"constant": False, "inputs": [{"name": "_spender", "type": "address"}, {"name": "_value", "type": "uint256"}], "name": "approve", "outputs": [{"name": "", "type": "bool"}], "type": "function"},
 ]
 
+# WETH ABI (for wrapping/unwrapping)
+WETH_ABI = [
+    {"constant": False, "inputs": [], "name": "deposit", "outputs": [], "payable": True, "type": "function"},
+    {"constant": False, "inputs": [{"name": "wad", "type": "uint256"}], "name": "withdraw", "outputs": [], "payable": False, "type": "function"},
+    {"constant": True, "inputs": [{"name": "", "type": "address"}], "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
+    {"constant": True, "inputs": [], "name": "decimals", "outputs": [{"name": "", "type": "uint8"}], "type": "function"},
+    {"constant": False, "inputs": [{"name": "guy", "type": "address"}, {"name": "wad", "type": "uint256"}], "name": "approve", "outputs": [{"name": "", "type": "bool"}], "type": "function"},
+    {"constant": True, "inputs": [{"name": "", "type": "address"}, {"name": "", "type": "address"}], "name": "allowance", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
+]
+
 # WETH address on Base
 WETH = "0x4200000000000000000000000000000000000006"
 
@@ -522,19 +532,49 @@ class MultiDEXRouter:
                 
                 print(f"[dim]Using V3 pool: {self.best_pool[:20]}... with fee={self.best_fee}[/dim]")
                 
-                # For V3, we need to estimate output
-                min_out = 0  # Would use proper quoting in production
+                # For V3 ETH->Token, we need to:
+                # 1. Wrap ETH to WETH via WETH contract
+                # 2. Approve SwapRouter02 to spend WETH
+                # 3. Call exactInputSingle with value=0
+                #
+                # SwapRouter02's exactInputSingle pulls tokens via pay() which requires
+                # approval from the user's wallet, not from router's internal balance.
                 
                 deadline = int(self.w3.eth.get_block('latest')['timestamp']) + 300
+                min_out = 0  # Would use proper quoting in production
                 
-                # Build multicall for ETH->Token: wrapETH + exactInputSingle + refundETH
-                # Use encode_abi for web3.py v7+ compatibility
-                # 1. Wrap ETH to WETH
-                wrap_call = router.functions.wrapETH(amount_in_wei)._encode_transaction_data()
+                # Step 1: Wrap ETH to WETH
+                weth_contract = self.w3.eth.contract(address=self.weth, abi=WETH_ABI)
+                wrap_tx = weth_contract.functions.deposit().build_transaction({
+                    'from': self.account.address,
+                    'value': amount_in_wei,
+                    'gas': 100000,
+                    'gasPrice': self.w3.eth.gas_price,
+                    'nonce': self.w3.eth.get_transaction_count(self.account.address),
+                    'chainId': 8453
+                })
+                signed_wrap = self.account.sign_transaction(wrap_tx)
+                wrap_hash = self.w3.eth.send_raw_transaction(signed_wrap.raw_transaction)
+                self.w3.eth.wait_for_transaction_receipt(wrap_hash, timeout=120)
+                print(f"[dim]  Wrapped ETH -> WETH (tx: {wrap_hash.hex()[:20]}...)[/dim]")
                 
-                # 2. Swap WETH for token (value=0 since WETH is already in router)
-                # web3.py v7 requires tuple, not dict for struct params
-                # ExactInputSingleParams order: (tokenIn, tokenOut, fee, recipient, deadline, amountIn, amountOutMinimum, sqrtPriceLimitX96)
+                # Step 2: Approve SwapRouter02 to spend WETH
+                approve_tx = weth_contract.functions.approve(
+                    dex_config["router"],
+                    amount_in_wei
+                ).build_transaction({
+                    'from': self.account.address,
+                    'gas': 100000,
+                    'gasPrice': self.w3.eth.gas_price,
+                    'nonce': self.w3.eth.get_transaction_count(self.account.address),
+                    'chainId': 8453
+                })
+                signed_approve = self.account.sign_transaction(approve_tx)
+                approve_hash = self.w3.eth.send_raw_transaction(signed_approve.raw_transaction)
+                self.w3.eth.wait_for_transaction_receipt(approve_hash, timeout=120)
+                print(f"[dim]  Approved router to spend WETH (tx: {approve_hash.hex()[:20]}...)[/dim]")
+                
+                # Step 3: Swap WETH for token
                 swap_params = (
                     self.weth,
                     self.token_address,
@@ -545,23 +585,15 @@ class MultiDEXRouter:
                     min_out,
                     0  # sqrtPriceLimitX96
                 )
-                swap_call = router.functions.exactInputSingle(swap_params)._encode_transaction_data()
-                
-                # 3. Refund any unused ETH
-                refund_call = router.functions.refundETH()._encode_transaction_data()
-                
-                # Build multicall transaction
-                tx = router.functions.multicall([wrap_call, swap_call, refund_call]).build_transaction({
+                swap_tx = router.functions.exactInputSingle(swap_params).build_transaction({
                     'from': self.account.address,
-                    'value': amount_in_wei,
                     'gas': 300000,
                     'gasPrice': self.w3.eth.gas_price,
                     'nonce': self.w3.eth.get_transaction_count(self.account.address),
                     'chainId': 8453
                 })
                 
-                # Sign and send
-                signed = self.account.sign_transaction(tx)
+                signed = self.account.sign_transaction(swap_tx)
                 tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
                 
                 # Wait for receipt
