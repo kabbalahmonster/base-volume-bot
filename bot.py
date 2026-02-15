@@ -1175,6 +1175,8 @@ def simulate_command(token_address: str = COMPUTE_TOKEN, amount: float = 0.0005,
         
         # DEBUG: Print actual commands
         console.print(f"[dim]  DEBUG: chain.commands = {chain.commands.hex() if hasattr(chain, 'commands') else 'N/A'}[/dim]")
+        console.print(f"[dim]  Note: Library uses different command IDs than raw UR[/dim]")
+        console.print(f"[dim]  0x0b = WRAP_ETH, 0x10 = V4_SWAP in library encoding[/dim]")
         
         # Build transaction
         base_ur = w3.to_checksum_address(UNIVERSAL_ROUTER)
@@ -1186,6 +1188,15 @@ def simulate_command(token_address: str = COMPUTE_TOKEN, amount: float = 0.0005,
         )
         
         console.print("[green]✓ Transaction built successfully[/green]\n")
+        
+        # Use library decoder to verify commands
+        try:
+            decoded = codec.decode(tx['data'])
+            console.print("[bold cyan]🔍 Library Decoded Commands:[/bold cyan]")
+            console.print(f"  {decoded}")
+            console.print()
+        except Exception as e:
+            console.print(f"[dim]Could not decode: {e}[/dim]")
         
         # Display transaction details
         console.print("[bold cyan]📋 Transaction Details:[/bold cyan]")
@@ -1218,11 +1229,12 @@ def simulate_command(token_address: str = COMPUTE_TOKEN, amount: float = 0.0005,
         
         # Check for expected command patterns
         console.print("[bold cyan]✅ Expected Command Sequence:[/bold cyan]")
-        console.print("  1. WRAP_ETH (0x0a) - Wrap ETH to WETH")
-        console.print("  2. V4_SWAP (0x10) - Execute V4 swap:")
+        console.print("  1. WRAP_ETH (0x0b in lib) - Wrap ETH to WETH")
+        console.print("  2. V4_SWAP (0x10 in lib) - Execute V4 swap:")
         console.print("     - settle (pay WETH)")
         console.print("     - swap_exact_in_single")
         console.print("     - take (COMPUTE to wallet)")
+        console.print("  [dim]Note: Library command IDs differ from raw UR constants[/dim]")
         console.print()
         
         # Eth call simulation (if requested - w3 already connected)
