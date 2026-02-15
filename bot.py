@@ -308,7 +308,7 @@ class VolumeBot:
             console.print(f"[dim]Swapping {amount_eth} ETH for ${self.token_symbol} via 1inch...[/dim]")
 
             success, result = self.oneinch.swap_eth_for_tokens(
-                COMPUTE_TOKEN,
+                self.token_address,
                 amount_eth,
                 slippage_percent=self.config.slippage_percent
             )
@@ -362,10 +362,10 @@ class VolumeBot:
             console.print(f"[dim]Swapping {compute_balance:.4f} ${self.token_symbol} for ETH via 1inch...[/dim]")
 
             # Get token decimals
-            token_decimals = self.compute_token.functions.decimals().call()
+            token_decimals = self.token_contract.functions.decimals().call()
 
             success, result = self.oneinch.swap_tokens_for_eth(
-                COMPUTE_TOKEN,
+                self.token_address,
                 compute_balance,
                 token_decimals=token_decimals,
                 slippage_percent=self.config.slippage_percent
@@ -710,12 +710,9 @@ def run_command(dry_run: bool = False, token_address: str = COMPUTE_TOKEN):
         config.dry_run = True
     
     # Run bot with specified token
-    global COMPUTE_TOKEN
-    COMPUTE_TOKEN = token_address  # Update for this run
-    
     console.print(f"[dim]Trading token: {token_address}[/dim]")
     
-    bot = VolumeBot(config, private_key)
+    bot = VolumeBot(config, private_key, token_address)
     bot.run()
 
 
