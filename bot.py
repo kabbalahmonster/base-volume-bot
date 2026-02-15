@@ -370,7 +370,7 @@ class VolumeBot:
                 )
                 
                 # If multi-DEX fails (e.g., no V2/V3 pools), try V4 Universal Router
-                if not success and "No DEX found" in str(result):
+                if not success and "No DEX" in str(result):
                     console.print(f"[dim]No V2/V3 pools found, trying V4 Universal Router...[/dim]")
                     success, result = self.v4_router.swap_eth_for_tokens(
                         self.token_address,
@@ -437,7 +437,7 @@ class VolumeBot:
                 )
                 
                 # If multi-DEX fails, try V4 Universal Router
-                if not success and "No DEX found" in str(result):
+                if not success and "No DEX" in str(result):
                     console.print(f"[dim]No V2/V3 pools found, trying V4 Universal Router...[/dim]")
                     token_decimals = self.token_contract.functions.decimals().call()
                     success, result = self.v4_router.swap_tokens_for_eth(
