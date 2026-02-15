@@ -518,29 +518,24 @@ class MultiDEXRouter:
                 deadline = int(self.w3.eth.get_block('latest')['timestamp']) + 300
                 
                 # Build multicall for ETH->Token: wrapETH + exactInputSingle + refundETH
+                # Use encode_abi for web3.py v7+ compatibility
                 # 1. Wrap ETH to WETH
-                wrap_call = router.encodeABI(
-                    fn_name="wrapETH",
-                    args=[amount_in_wei]
-                )
+                wrap_call = router.functions.wrapETH(amount_in_wei)._encode_transaction_data()
                 
                 # 2. Swap WETH for token (value=0 since WETH is already in router)
-                swap_call = router.encodeABI(
-                    fn_name="exactInputSingle",
-                    args=[{
-                        'tokenIn': self.weth,
-                        'tokenOut': self.token_address,
-                        'fee': self.best_fee,
-                        'recipient': self.account.address,
-                        'deadline': deadline,
-                        'amountIn': amount_in_wei,
-                        'amountOutMinimum': min_out,
-                        'sqrtPriceLimitX96': 0
-                    }]
-                )
+                swap_call = router.functions.exactInputSingle({
+                    'tokenIn': self.weth,
+                    'tokenOut': self.token_address,
+                    'fee': self.best_fee,
+                    'recipient': self.account.address,
+                    'deadline': deadline,
+                    'amountIn': amount_in_wei,
+                    'amountOutMinimum': min_out,
+                    'sqrtPriceLimitX96': 0
+                })._encode_transaction_data()
                 
                 # 3. Refund any unused ETH
-                refund_call = router.encodeABI(fn_name="refundETH")
+                refund_call = router.functions.refundETH()._encode_transaction_data()
                 
                 # Build multicall transaction
                 tx = router.functions.multicall([wrap_call, swap_call, refund_call]).build_transaction({
