@@ -533,7 +533,7 @@ class MultiDEXRouter:
                 print(f"[dim]Using V3 pool: {self.best_pool[:20]}... with fee={self.best_fee}[/dim]")
                 
                 # For V3 ETH->Token, we need to:
-                # 1. Wrap ETH to WETH via WETH contract
+                # 1. Wrap ETH to WETH via WETH contract (skip if already have WETH)
                 # 2. Approve SwapRouter02 to spend WETH
                 # 3. Call exactInputSingle with value=0
                 #
@@ -543,36 +543,54 @@ class MultiDEXRouter:
                 deadline = int(self.w3.eth.get_block('latest')['timestamp']) + 300
                 min_out = 0  # Would use proper quoting in production
                 
-                # Step 1: Wrap ETH to WETH
+                # Initialize WETH contract
                 weth_contract = self.w3.eth.contract(address=self.weth, abi=WETH_ABI)
-                wrap_tx = weth_contract.functions.deposit().build_transaction({
-                    'from': self.account.address,
-                    'value': amount_in_wei,
-                    'gas': 100000,
-                    'gasPrice': self.w3.eth.gas_price,
-                    'nonce': self.w3.eth.get_transaction_count(self.account.address),
-                    'chainId': 8453
-                })
-                signed_wrap = self.account.sign_transaction(wrap_tx)
-                wrap_hash = self.w3.eth.send_raw_transaction(signed_wrap.raw_transaction)
-                self.w3.eth.wait_for_transaction_receipt(wrap_hash, timeout=120)
-                print(f"[dim]  Wrapped ETH -> WETH (tx: {wrap_hash.hex()[:20]}...)[/dim]")
+                
+                # Get starting nonce and track it manually for sequential txs
+                nonce = self.w3.eth.get_transaction_count(self.account.address)
+                
+                # Check existing WETH balance - skip wrapping if we already have enough
+                weth_balance = weth_contract.functions.balanceOf(self.account.address).call()
+                if weth_balance >= amount_in_wei:
+                    print(f"[dim]  Already have {weth_balance / 1e18:.6f} WETH, skipping wrap[/dim]")
+                else:
+                    # Step 1: Wrap ETH to WETH
+                    wrap_tx = weth_contract.functions.deposit().build_transaction({
+                        'from': self.account.address,
+                        'value': amount_in_wei,
+                        'gas': 100000,
+                        'gasPrice': self.w3.eth.gas_price,
+                        'nonce': nonce,
+                        'chainId': 8453
+                    })
+                    signed_wrap = self.account.sign_transaction(wrap_tx)
+                    wrap_hash = self.w3.eth.send_raw_transaction(signed_wrap.raw_transaction)
+                    self.w3.eth.wait_for_transaction_receipt(wrap_hash, timeout=120)
+                    print(f"[dim]  Wrapped ETH -> WETH (tx: {wrap_hash.hex()[:20]}...)[/dim]")
+                    nonce += 1  # Increment nonce for next tx
                 
                 # Step 2: Approve SwapRouter02 to spend WETH
-                approve_tx = weth_contract.functions.approve(
-                    dex_config["router"],
-                    amount_in_wei
-                ).build_transaction({
-                    'from': self.account.address,
-                    'gas': 100000,
-                    'gasPrice': self.w3.eth.gas_price,
-                    'nonce': self.w3.eth.get_transaction_count(self.account.address),
-                    'chainId': 8453
-                })
-                signed_approve = self.account.sign_transaction(approve_tx)
-                approve_hash = self.w3.eth.send_raw_transaction(signed_approve.raw_transaction)
-                self.w3.eth.wait_for_transaction_receipt(approve_hash, timeout=120)
-                print(f"[dim]  Approved router to spend WETH (tx: {approve_hash.hex()[:20]}...)[/dim]")
+                # Check existing allowance first
+                router_address = dex_config["router"]
+                existing_allowance = weth_contract.functions.allowance(self.account.address, router_address).call()
+                if existing_allowance >= amount_in_wei:
+                    print(f"[dim]  Already approved {existing_allowance / 1e18:.6f} WETH, skipping approve[/dim]")
+                else:
+                    approve_tx = weth_contract.functions.approve(
+                        router_address,
+                        amount_in_wei
+                    ).build_transaction({
+                        'from': self.account.address,
+                        'gas': 100000,
+                        'gasPrice': self.w3.eth.gas_price,
+                        'nonce': nonce,
+                        'chainId': 8453
+                    })
+                    signed_approve = self.account.sign_transaction(approve_tx)
+                    approve_hash = self.w3.eth.send_raw_transaction(signed_approve.raw_transaction)
+                    self.w3.eth.wait_for_transaction_receipt(approve_hash, timeout=120)
+                    print(f"[dim]  Approved router to spend WETH (tx: {approve_hash.hex()[:20]}...)[/dim]")
+                    nonce += 1  # Increment nonce for next tx
                 
                 # Step 3: Swap WETH for token
                 swap_params = (
@@ -589,7 +607,7 @@ class MultiDEXRouter:
                     'from': self.account.address,
                     'gas': 300000,
                     'gasPrice': self.w3.eth.gas_price,
-                    'nonce': self.w3.eth.get_transaction_count(self.account.address),
+                    'nonce': nonce,  # Use tracked nonce
                     'chainId': 8453
                 })
                 
