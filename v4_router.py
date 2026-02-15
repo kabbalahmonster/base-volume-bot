@@ -152,8 +152,9 @@ class V4DirectRouter:
                         amount_out_min=min_amount_out,
                         hook_data=b''
                     )
-                    # Take the output tokens
-                    v4_swap.take_all(currency=token_address, recipient=self.account.address)
+                    # Take the output tokens to wallet
+                    # take(currency, recipient, amount) - specify exact recipient
+                    v4_swap.take(currency=token_address, recipient=self.account.address, amount=min_amount_out)
                     
                     print(f"[green]✓ Found V4 pool: fee={fee}[/green]")
                     
@@ -255,8 +256,8 @@ class V4DirectRouter:
                         amount_out_min=min_amount_out,
                         hook_data=b''
                     )
-                    # Take WETH output
-                    v4_swap.take_all(currency=self.weth, recipient=self.account.address)
+                    # Take WETH output to wallet
+                    v4_swap.take(currency=self.weth, recipient=self.account.address, amount=min_amount_out)
                     
                     deadline = int(time.time()) + deadline_seconds
                     

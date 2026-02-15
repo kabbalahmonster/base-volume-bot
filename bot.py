@@ -362,8 +362,9 @@ class VolumeBot:
                             amount_out_min=1,  # Minimal for test
                             hook_data=b''
                         )
-                        # Settle and take the output
-                        v4_swap.take_all(currency=compute, recipient=self.account.address)
+                        # Take the output tokens to wallet
+                        # take(currency, recipient, amount) - specify exact recipient
+                        v4_swap.take(currency=compute, recipient=self.account.address, amount=1)
                         
                         # Build transaction
                         tx = codec.build_transaction(
