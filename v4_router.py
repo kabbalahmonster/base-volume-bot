@@ -144,7 +144,8 @@ class V4DirectRouter:
                     
                     # Add V4 swap exact in single
                     # Note: The library uses chained calls via .chain()
-                    chain.v4_swap_exact_in_single(
+                    # Method is v4_swap (not v4_swap_exact_in_single)
+                    chain.v4_swap(
                         pool_key=pool_key,
                         zero_for_one=zero_for_one,
                         amount_in=amount_in_wei,
@@ -247,7 +248,7 @@ class V4DirectRouter:
                     
                     chain = self.codec.encode.chain()
                     
-                    chain.v4_swap_exact_in_single(
+                    chain.v4_swap(
                         pool_key=pool_key,
                         zero_for_one=zero_for_one,
                         amount_in=amount_in_units,
