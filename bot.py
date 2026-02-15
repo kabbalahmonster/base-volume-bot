@@ -954,6 +954,77 @@ def balance_command():
     console.print(table)
 
 
+def recover_command(unwrap_weth: bool = False):
+    """Recover ETH stuck in Universal Router contract"""
+    # Load config
+    try:
+        with open("bot_config.json", 'r') as f:
+            config_data = json.load(f)
+        config = BotConfig.from_dict(config_data)
+    except FileNotFoundError:
+        console.print("[red]Config not found. Run 'setup' first.[/red]")
+        return
+    
+    # Get password and load key
+    console.print("[yellow]Enter wallet password:[/yellow]")
+    password = getpass.getpass("> ")
+    
+    key_manager = SecureKeyManager()
+    private_key = key_manager.load_and_decrypt(password)
+    
+    if not private_key:
+        console.print("[red]Failed to decrypt wallet. Wrong password?[/red]")
+        return
+    
+    # Initialize bot for connection
+    from v4_router import V4DirectRouter
+    from web3 import Web3
+    
+    w3 = Web3(Web3.HTTPProvider(config.rpc_url))
+    from eth_account import Account
+    account = Account.from_key(private_key)
+    
+    # Initialize V4 router
+    v4_router = V4DirectRouter(w3, account)
+    
+    if not v4_router.has_library:
+        console.print("[red]V4 library not installed. Run: pip install uniswap-universal-router-decoder[/red]")
+        return
+    
+    console.print("\n[bold cyan]🔧 Recovery Tool[/bold cyan]")
+    console.print("[dim]Recovering ETH from Universal Router...[/dim]\n")
+    
+    # Show balances before
+    eth_before = w3.eth.get_balance(account.address)
+    console.print(f"Wallet ETH before: {w3.from_wei(eth_before, 'ether'):.6f} ETH")
+    
+    # Recover ETH from UR
+    success, result = v4_router.recover_eth_from_router()
+    if success:
+        console.print(f"[green]✓ ETH recovered! TX: {result[:20]}...[/green]")
+    else:
+        console.print(f"[yellow]⚠ Recovery result: {result}[/yellow]")
+    
+    # Optionally unwrap WETH
+    if unwrap_weth:
+        console.print("\n[dim]Unwrapping WETH...[/dim]")
+        success, result = v4_router.unwrap_weth()
+        if success:
+            console.print(f"[green]✓ WETH unwrapped! TX: {result[:20]}...[/green]")
+        else:
+            console.print(f"[yellow]⚠ Unwrap result: {result}[/yellow]")
+    
+    # Show balances after
+    eth_after = w3.eth.get_balance(account.address)
+    console.print(f"\nWallet ETH after: {w3.from_wei(eth_after, 'ether'):.6f} ETH")
+    
+    if eth_after > eth_before:
+        recovered = w3.from_wei(eth_after - eth_before, 'ether')
+        console.print(f"[green]✓ Recovered: {recovered:.6f} ETH[/green]")
+    else:
+        console.print("[dim]No additional ETH recovered (may already be in wallet)[/dim]")
+
+
 def main():
     import argparse
     
@@ -979,6 +1050,10 @@ def main():
     # Balance command
     balance_parser = subparsers.add_parser("balance", help="Check wallet balances")
     
+    # Recover command - recover ETH stuck in Universal Router
+    recover_parser = subparsers.add_parser("recover", help="Recover ETH from Universal Router")
+    recover_parser.add_argument("--unwrap", action="store_true", help="Also unwrap any WETH")
+    
     args = parser.parse_args()
     
     if args.command == "setup":
@@ -990,6 +1065,8 @@ def main():
                         withdraw_compute=args.compute, dry_run=args.dry_run)
     elif args.command == "balance":
         balance_command()
+    elif args.command == "recover":
+        recover_command(unwrap_weth=args.unwrap)
     else:
         parser.print_help()
 

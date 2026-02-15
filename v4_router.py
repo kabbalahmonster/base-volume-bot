@@ -297,6 +297,108 @@ class V4DirectRouter:
         except Exception as e:
             raise TransactionError(f"Swap error: {e}")
     
+    def recover_eth_from_router(self) -> Tuple[bool, str]:
+        """
+        Recover ETH stuck in Universal Router contract.
+        
+        Uses SWEEP command to pull ETH from UR back to wallet.
+        
+        Returns:
+            (success, tx_hash or error message)
+        """
+        if not self.has_library:
+            return False, "Library not installed"
+        
+        print(f"[dim]Recovering ETH from Universal Router...[/dim]")
+        
+        try:
+            chain = self.codec.encode.chain()
+            
+            # Sweep ETH (address(0) represents native ETH)
+            chain.sweep(
+                function_recipient=self.FunctionRecipient.SENDER,
+                token_address="0x0000000000000000000000000000000000000000",  # ETH
+                amount_min=0,  # Sweep all
+            )
+            
+            base_ur = self.w3.to_checksum_address(UNIVERSAL_ROUTER)
+            
+            tx = chain.build_transaction(
+                sender=self.account.address,
+                deadline=int(time.time()) + 300,
+                ur_address=base_ur
+            )
+            
+            signed = self.account.sign_transaction(tx)
+            tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+            tx_hex = self.w3.to_hex(tx_hash)
+            
+            receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+            
+            if receipt['status'] == 1:
+                print(f"[green]✓ ETH recovered! TX: {tx_hex[:20]}...[/green]")
+                return True, tx_hex
+            else:
+                return False, f"Recovery failed (status={receipt['status']})"
+                
+        except Exception as e:
+            return False, f"Recovery error: {e}"
+    
+    def unwrap_weth(self, amount: Optional[int] = None) -> Tuple[bool, str]:
+        """
+        Unwrap WETH to ETH.
+        
+        Args:
+            amount: Amount to unwrap (None = unwrap all)
+            
+        Returns:
+            (success, tx_hash or error message)
+        """
+        if not self.has_library:
+            return False, "Library not installed"
+        
+        print(f"[dim]Unwrapping WETH...[/dim]")
+        
+        try:
+            if amount is None:
+                # Get balance
+                weth_contract = self.w3.eth.contract(address=self.weth, abi=ERC20_ABI)
+                amount = weth_contract.functions.balanceOf(self.account.address).call()
+            
+            if amount == 0:
+                return False, "No WETH to unwrap"
+            
+            chain = self.codec.encode.chain()
+            
+            # Unwrap WETH
+            chain.unwrap_weth(
+                function_recipient=self.FunctionRecipient.SENDER,
+                amount=amount
+            )
+            
+            base_ur = self.w3.to_checksum_address(UNIVERSAL_ROUTER)
+            
+            tx = chain.build_transaction(
+                sender=self.account.address,
+                deadline=int(time.time()) + 300,
+                ur_address=base_ur
+            )
+            
+            signed = self.account.sign_transaction(tx)
+            tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+            tx_hex = self.w3.to_hex(tx_hash)
+            
+            receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+            
+            if receipt['status'] == 1:
+                print(f"[green]✓ WETH unwrapped! TX: {tx_hex[:20]}...[/green]")
+                return True, tx_hex
+            else:
+                return False, f"Unwrap failed (status={receipt['status']})"
+                
+        except Exception as e:
+            return False, f"Unwrap error: {e}"
+    
     def get_stats(self) -> Dict[str, Any]:
         """Get router statistics."""
         return {
