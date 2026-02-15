@@ -350,13 +350,14 @@ class VolumeBot:
                         
                         # Add wrap ETH
                         from uniswap_universal_router_decoder import FunctionRecipient
-                        chain.wrap_eth(FunctionRecipient.ROUTER, int(test_amount * 1e18))
+                        test_amount_wei = int(test_amount * 10**18)
+                        chain.wrap_eth(FunctionRecipient.ROUTER, test_amount_wei)
                         
                         # Add V4 swap
                         chain.v4_swap(
                             pool_key=pool_key,
                             zero_for_one=zero_for_one,
-                            amount_in=int(test_amount * 1e18),
+                            amount_in=test_amount_wei,
                             amount_out_min=1,  # Minimal for test
                             sqrt_price_limit_x96=0,
                             hook_data=b''
@@ -367,7 +368,7 @@ class VolumeBot:
                             chain=chain,
                             from_address=self.account.address,
                             deadline=int(time.time()) + 300,
-                            value=int(test_amount * 1e18)
+                            value=test_amount_wei
                         )
                         
                         console.print(f"[dim][DRY RUN] Commands: {tx.get('data', 'N/A')[:50]}...[/dim]")
