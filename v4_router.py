@@ -158,15 +158,14 @@ class V4DirectRouter:
                     
                     print(f"[green]✓ Found V4 pool: fee={fee}[/green]")
                     
-                    # Build transaction
+                    # Build transaction with Base UR address
                     deadline = int(time.time()) + deadline_seconds
                     
-                    tx = self.codec.build_transaction(
-                        chain=chain,
-                        from_address=self.account.address,
-                        deadline=deadline,
+                    tx = chain.build_transaction(
+                        sender=self.account.address,
                         value=amount_in_wei,
-                        w3=self.w3
+                        deadline=deadline,
+                        ur_address=self.router_address  # Base Universal Router
                     )
                     
                     print(f"[dim]Transaction built, sending...[/dim]")
@@ -261,11 +260,10 @@ class V4DirectRouter:
                     
                     deadline = int(time.time()) + deadline_seconds
                     
-                    tx = self.codec.build_transaction(
-                        chain=chain,
-                        from_address=self.account.address,
+                    tx = chain.build_transaction(
+                        sender=self.account.address,
                         deadline=deadline,
-                        w3=self.w3
+                        ur_address=self.router_address  # Base Universal Router
                     )
                     
                     signed = self.account.sign_transaction(tx)
