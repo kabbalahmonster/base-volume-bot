@@ -369,18 +369,28 @@ class MultiDEXRouter:
                     try:
                         pool_address = factory.functions.getPool(self.weth, self.token_address, fee).call()
                         if pool_address and pool_address != "0x0000000000000000000000000000000000000000":
-                            # Pool exists - check if it has liquidity
+                            # Pool exists - check if it has liquidity and is initialized
                             pool = self.w3.eth.contract(address=pool_address, abi=UNISWAP_V3_POOL_ABI)
                             liquidity = pool.functions.liquidity().call()
-                            if liquidity > 0:
-                                # Found a pool with liquidity
-                                if liquidity > best_liquidity:
+                            slot0 = pool.functions.slot0().call()
+                            sqrt_price = slot0[0]
+                            unlocked = slot0[6]
+                            
+                            print(f"[dim]  V3 fee={fee}: pool={pool_address[:20]}..., liq={liquidity}, sqrtPrice={sqrt_price}, unlocked={unlocked}[/dim]")
+                            
+                            # Pool must have liquidity, valid price, and be unlocked
+                            if liquidity > 0 and sqrt_price > 0 and unlocked:
+                                # Found a valid pool - prefer lower fee tiers for better execution
+                                # Use a scoring system: higher liquidity / lower fee = better
+                                score = liquidity / (fee + 1)  # +1 to avoid div by zero
+                                if score > best_liquidity:
                                     best_dex = "uniswap_v3"
-                                    best_liquidity = liquidity
+                                    best_liquidity = score
                                     self.best_fee = fee
                                     self.best_pool = pool_address
-                                    print(f"[green]✓ Uniswap V3 pool found (fee={fee}, liq={liquidity})[/green]")
-                    except:
+                                    print(f"[green]✓ Uniswap V3 pool selected (fee={fee}, liq={liquidity})[/green]")
+                    except Exception as e:
+                        print(f"[dim]  V3 fee={fee}: {e}[/dim]")
                         continue
             except Exception as e:
                 print(f"[dim]  Uniswap V3: {e}[/dim]")
