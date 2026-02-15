@@ -671,7 +671,7 @@ def setup_command():
         console.print("="*60)
 
 
-def run_command(dry_run: bool = False):
+def run_command(dry_run: bool = False, token_address: str = COMPUTE_TOKEN):
     """Run the bot"""
     # Load config
     try:
@@ -697,7 +697,12 @@ def run_command(dry_run: bool = False):
     if dry_run:
         config.dry_run = True
     
-    # Run bot
+    # Run bot with specified token
+    global COMPUTE_TOKEN
+    COMPUTE_TOKEN = token_address  # Update for this run
+    
+    console.print(f"[dim]Trading token: {token_address}[/dim]")
+    
     bot = VolumeBot(config, private_key)
     bot.run()
 
@@ -794,6 +799,8 @@ def main():
     # Run command
     run_parser = subparsers.add_parser("run", help="Start trading bot")
     run_parser.add_argument("--dry-run", action="store_true", help="Simulation mode")
+    run_parser.add_argument("--token-address", type=str, default=COMPUTE_TOKEN, 
+                           help=f"Token address to trade (default: {COMPUTE_TOKEN})")
     
     # Withdraw command
     withdraw_parser = subparsers.add_parser("withdraw", help="Withdraw funds")
@@ -810,7 +817,7 @@ def main():
     if args.command == "setup":
         setup_command()
     elif args.command == "run":
-        run_command(dry_run=args.dry_run)
+        run_command(dry_run=args.dry_run, token_address=args.token_address)
     elif args.command == "withdraw":
         withdraw_command(to_address=args.to, amount=args.amount, 
                         withdraw_compute=args.compute, dry_run=args.dry_run)
