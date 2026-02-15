@@ -139,10 +139,15 @@ class V4DirectRouter:
                     min_amount_out = self._calculate_min_amount_out(expected_out, slippage_percent)
                     
                     # Build swap using library's encode.chain() API
-                    # Pattern: wrap ETH -> V4 swap exact in
+                    # Pattern: wrap ETH -> V4 swap exact in -> take tokens
                     chain = self.codec.encode.chain()
                     
-                    # Add V4 swap exact in single
+                    # 1. Wrap ETH to WETH (command 0x0a)
+                    chain.wrap_eth(self.FunctionRecipient.ROUTER, amount_in_wei)
+                    
+                    print(f"[dim]  Added WRAP_ETH command[/dim]")
+                    
+                    # 2. Add V4 swap exact in single (command 0x10)
                     # chain.v4_swap() returns a builder object
                     v4_swap = chain.v4_swap()
                     v4_swap.swap_exact_in_single(

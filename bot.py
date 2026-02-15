@@ -1143,10 +1143,11 @@ def simulate_command(token_address: str = COMPUTE_TOKEN, amount: float = 0.0005,
         codec = RouterCodec(w3=w3)
         chain = codec.encode.chain()
         
-        # Wrap ETH
+        # 1. Wrap ETH to WETH (command 0x0a)
         chain.wrap_eth(FunctionRecipient.ROUTER, amount_in_wei)
+        console.print("[dim]  Added WRAP_ETH command[/dim]")
         
-        # V4 swap
+        # 2. V4 swap
         v4_swap = chain.v4_swap()
         v4_swap.swap_exact_in_single(
             pool_key=pool_key,
