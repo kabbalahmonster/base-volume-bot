@@ -979,10 +979,23 @@ def recover_command(unwrap_weth: bool = False):
     # Initialize bot for connection
     from v4_router import V4DirectRouter
     from web3 import Web3
-    
-    w3 = Web3(Web3.HTTPProvider(config.rpc_url))
     from eth_account import Account
+    
     account = Account.from_key(private_key)
+    
+    # Try multiple RPCs (same logic as connect())
+    w3 = None
+    for rpc_url in RPC_URLS.get("base", ["https://mainnet.base.org"]):
+        try:
+            w3 = Web3(Web3.HTTPProvider(rpc_url))
+            if w3.is_connected():
+                break
+        except:
+            continue
+    
+    if not w3 or not w3.is_connected():
+        console.print("[red]Failed to connect to any RPC[/red]")
+        return
     
     # Initialize V4 router
     v4_router = V4DirectRouter(w3, account)
