@@ -160,6 +160,7 @@ class BotConfig:
     min_eth_balance: float = 0.001
     dry_run: bool = False
     log_level: str = "INFO"
+    router_type: str = "v3"  # v3, 0x, or v4
     
     def to_dict(self) -> Dict:
         return asdict(self)
@@ -228,10 +229,27 @@ class VolumeBot:
             console.print(f"[red]✗ Invalid private key: {e}[/red]")
             return False
         
-        # Setup DEX routers (1inch primary, MultiDEX fallback)
-        console.print("[dim]Initializing 1inch aggregator...[/dim]")
-        self.oneinch = OneInchAggregator(self.w3, self.account)
-        self.dex_router = MultiDEXRouter(self.w3, self.account, self.token_address)
+        # Setup DEX routers based on config
+        router_type = getattr(self.config, 'router_type', 'v3')
+        console.print(f"[dim]Initializing router: {router_type}...[/dim]")
+        
+        if router_type == "0x":
+            from zerox_router import ZeroXAggregator
+            self.zerox = ZeroXAggregator(self.w3, self.account)
+            self.dex_router = None
+            self.oneinch = None
+        elif router_type == "v4":
+            from v4_router import V4DirectRouter
+            self.v4_router = V4DirectRouter(self.w3, self.account)
+            self.dex_router = None
+            self.oneinch = None
+            self.zerox = None
+        else:  # v3 or default
+            console.print("[dim]Initializing 1inch aggregator...[/dim]")
+            self.oneinch = OneInchAggregator(self.w3, self.account)
+            self.dex_router = MultiDEXRouter(self.w3, self.account, self.token_address)
+            self.zerox = None
+            self.v4_router = None
         self.token_contract = self.w3.eth.contract(
             address=self.w3.to_checksum_address(self.token_address),
             abi=ERC20_ABI
@@ -306,47 +324,44 @@ class VolumeBot:
                 console.print(f"[red]✗ Insufficient ETH balance[/red]")
                 return False
             
-            # Try 0x first if API key is configured, then 1inch, then multi-DEX
-            use_zerox = hasattr(self.config, 'zerox_api_key') and self.config.zerox_api_key
-            use_oneinch = hasattr(self.config, 'oneinch_api_key') and self.config.oneinch_api_key
+            # Route based on configured router type
+            router_type = getattr(self.config, 'router_type', 'v3')
             
-            if use_zerox:
+            if router_type == "0x" and self.zerox:
                 console.print(f"[dim]Swapping {amount_eth} ETH for ${self.token_symbol} via 0x...[/dim]")
-                zerox = ZeroXAggregator(self.w3, self.account, self.config.zerox_api_key)
-                success, result = zerox.swap_eth_for_tokens(
+                success, result = self.zerox.swap_eth_for_tokens(
                     self.token_address,
                     amount_eth,
                     slippage_percent=self.config.slippage_percent
                 )
-                if not success:
-                    console.print(f"[yellow]⚠ 0x failed: {result}[/yellow]")
-                    console.print(f"[dim]Falling back...[/dim]")
-                else:
+                if success:
                     console.print(f"[green]✓ Buy successful via 0x![/green]")
                     console.print(f"[dim]  TX: {result[:20]}...[/dim]")
                     self.successful_buys += 1
                     self.total_bought_eth += amount_eth
                     return True
+                else:
+                    console.print(f"[red]✗ 0x failed: {result}[/red]")
+                    return False
             
-            if use_oneinch:
-                console.print(f"[dim]Swapping {amount_eth} ETH for ${self.token_symbol} via 1inch...[/dim]")
-                success, result = self.oneinch.swap_eth_for_tokens(
+            elif router_type == "v4" and hasattr(self, 'v4_router') and self.v4_router:
+                console.print(f"[dim]Swapping {amount_eth} ETH for ${self.token_symbol} via V4...[/dim]")
+                success, result = self.v4_router.swap_eth_for_tokens(
                     self.token_address,
                     amount_eth,
                     slippage_percent=self.config.slippage_percent
                 )
-                if not success:
-                    console.print(f"[yellow]⚠ 1inch failed: {result}[/yellow]")
-                    console.print(f"[dim]Falling back to multi-DEX router...[/dim]")
-                else:
-                    console.print(f"[green]✓ Buy successful via 1inch![/green]")
+                if success:
+                    console.print(f"[green]✓ Buy successful via V4![/green]")
                     console.print(f"[dim]  TX: {result[:20]}...[/dim]")
                     self.successful_buys += 1
                     self.total_bought_eth += amount_eth
                     return True
+                else:
+                    console.print(f"[red]✗ V4 failed: {result}[/red]")
+                    return False
             
-            # Use multi-DEX router (direct swap)
-            if (not use_zerox and not use_oneinch) or not success:
+            else:  # v3 or default - use multi-DEX router
                 console.print(f"[dim]Swapping {amount_eth} ETH for ${self.token_symbol} via multi-DEX router...[/dim]")
                 success, result = self.dex_router.swap_eth_for_tokens(
                     amount_eth,
@@ -389,23 +404,38 @@ class VolumeBot:
             
             console.print(f"[dim]Selling {compute_balance:.4f} ${self.token_symbol}...[/dim]")
             
-            # Execute swap using 1inch (primary) with fallback to multi-DEX router
-            console.print(f"[dim]Swapping {compute_balance:.4f} ${self.token_symbol} for ETH via 1inch...[/dim]")
-
             # Get token decimals
             token_decimals = self.token_contract.functions.decimals().call()
-
-            success, result = self.oneinch.swap_tokens_for_eth(
-                self.token_address,
-                compute_balance,
-                token_decimals=token_decimals,
-                slippage_percent=self.config.slippage_percent
-            )
-
-            if not success:
-                console.print(f"[yellow]⚠ 1inch failed: {result}[/yellow]")
-                console.print(f"[dim]Falling back to multi-DEX router...[/dim]")
-
+            
+            # Route based on configured router type
+            router_type = getattr(self.config, 'router_type', 'v3')
+            
+            if router_type == "0x" and self.zerox:
+                console.print(f"[dim]Swapping {compute_balance:.4f} ${self.token_symbol} for ETH via 0x...[/dim]")
+                success, result = self.zerox.swap_tokens_for_eth(
+                    self.token_address,
+                    compute_balance,
+                    token_decimals=token_decimals,
+                    slippage_percent=self.config.slippage_percent
+                )
+                if not success:
+                    console.print(f"[red]✗ 0x sell failed: {result}[/red]")
+                    return False
+            
+            elif router_type == "v4" and hasattr(self, 'v4_router') and self.v4_router:
+                console.print(f"[dim]Swapping {compute_balance:.4f} ${self.token_symbol} for ETH via V4...[/dim]")
+                success, result = self.v4_router.swap_tokens_for_eth(
+                    self.token_address,
+                    compute_balance,
+                    token_decimals=token_decimals,
+                    slippage_percent=self.config.slippage_percent
+                )
+                if not success:
+                    console.print(f"[red]✗ V4 sell failed: {result}[/red]")
+                    return False
+            
+            else:  # v3 or default - use multi-DEX router
+                console.print(f"[dim]Swapping {compute_balance:.4f} ${self.token_symbol} for ETH via multi-DEX router...[/dim]")
                 success, result = self.dex_router.swap_tokens_for_eth(
                     compute_balance,
                     slippage_percent=self.config.slippage_percent
@@ -716,7 +746,7 @@ def setup_command():
         console.print("="*60)
 
 
-def run_command(dry_run: bool = False, token_address: str = COMPUTE_TOKEN):
+def run_command(dry_run: bool = False, token_address: str = COMPUTE_TOKEN, router: str = "v3"):
     """Run the bot"""
     # Load config
     try:
@@ -738,12 +768,14 @@ def run_command(dry_run: bool = False, token_address: str = COMPUTE_TOKEN):
         console.print("[red]Failed to decrypt wallet. Wrong password?[/red]")
         return
     
-    # Override dry run
+    # Override dry run and router
     if dry_run:
         config.dry_run = True
+    config.router_type = router
     
-    # Run bot with specified token
+    # Run bot with specified token and router
     console.print(f"[dim]Trading token: {token_address}[/dim]")
+    console.print(f"[dim]Using router: {router}[/dim]")
     
     bot = VolumeBot(config, private_key, token_address)
     bot.run()
@@ -848,6 +880,8 @@ def main():
     run_parser.add_argument("--dry-run", action="store_true", help="Simulation mode")
     run_parser.add_argument("--token-address", type=str, default=COMPUTE_TOKEN, 
                            help=f"Token address to trade (default: {COMPUTE_TOKEN})")
+    run_parser.add_argument("--router", type=str, default="v3", choices=["v3", "0x", "v4"],
+                           help="DEX router to use (default: v3)")
     
     # Withdraw command
     withdraw_parser = subparsers.add_parser("withdraw", help="Withdraw funds")
@@ -864,7 +898,7 @@ def main():
     if args.command == "setup":
         setup_command()
     elif args.command == "run":
-        run_command(dry_run=args.dry_run, token_address=args.token_address)
+        run_command(dry_run=args.dry_run, token_address=args.token_address, router=args.router)
     elif args.command == "withdraw":
         withdraw_command(to_address=args.to, amount=args.amount, 
                         withdraw_compute=args.compute, dry_run=args.dry_run)
