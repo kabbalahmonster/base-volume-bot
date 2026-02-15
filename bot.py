@@ -33,14 +33,14 @@ from rich.text import Text
 from rich import box
 from rich.logging import RichHandler
 
-# Import wallet
+# Import wallet and DEX router
 from wallet import SecureKeyManager, SecureWallet
+from dex_router import MultiDEXRouter
 
 # Constants
 COMPUTE_TOKEN = "0x696381f39F17cAD67032f5f52A4924ce84e51BA3"
 WETH = "0x4200000000000000000000000000000000000006"
 USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
-ROUTER = "0x2626664c2603336E57B271c5C0b26F421741e481"
 
 RPC_URLS = {
     "base": [
@@ -168,22 +168,22 @@ class BotConfig:
 
 class VolumeBot:
     """Main volume bot with integrated trading"""
-    
+
     def __init__(self, config: BotConfig, private_key: str):
         self.config = config
         self.private_key = private_key
         self.w3: Optional[Web3] = None
         self.account: Optional[Account] = None
-        self.router = None
+        self.dex_router: Optional[MultiDEXRouter] = None
         self.compute_token = None
-        
+
         # Stats
         self.buy_count = 0
         self.total_bought_eth = Decimal("0")
         self.total_bought_compute = Decimal("0")
         self.successful_buys = 0
         self.failed_buys = 0
-        
+
         self.setup_logging()
     
     def setup_logging(self):
@@ -222,11 +222,8 @@ class VolumeBot:
             console.print(f"[red]✗ Invalid private key: {e}[/red]")
             return False
         
-        # Setup contracts
-        self.router = self.w3.eth.contract(
-            address=self.w3.to_checksum_address(ROUTER),
-            abi=ROUTER_ABI
-        )
+        # Setup DEX router (multi-DEX support)
+        self.dex_router = MultiDEXRouter(self.w3, self.account, COMPUTE_TOKEN)
         self.compute_token = self.w3.eth.contract(
             address=self.w3.to_checksum_address(COMPUTE_TOKEN),
             abi=ERC20_ABI
@@ -291,49 +288,22 @@ class VolumeBot:
                 console.print(f"[red]✗ Insufficient ETH balance[/red]")
                 return False
             
-            # Execute swap
-            console.print(f"[dim]Swapping {amount_eth} ETH for $COMPUTE...[/dim]")
-            
-            # Build transaction
-            deadline = int(time.time()) + 300  # 5 min deadline
-            amount_in = self.w3.to_wei(amount_eth, 'ether')
-            min_out = 0  # Accept any amount (for testing, use proper slippage in prod)
-            
-            tx = self.router.functions.exactInputSingle({
-                'tokenIn': WETH,
-                'tokenOut': COMPUTE_TOKEN,
-                'fee': 3000,  # 0.3%
-                'recipient': self.account.address,
-                'deadline': deadline,
-                'amountIn': amount_in,
-                'amountOutMinimum': min_out,
-                'sqrtPriceLimitX96': 0
-            }).build_transaction({
-                'from': self.account.address,
-                'value': amount_in,
-                'gas': 300000,
-                'gasPrice': self.w3.eth.gas_price,
-                'nonce': self.w3.eth.get_transaction_count(self.account.address),
-                'chainId': 8453
-            })
-            
-            # Sign and send
-            signed = self.account.sign_transaction(tx)
-            tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
-            console.print(f"[dim]TX: {self.w3.to_hex(tx_hash)}[/dim]")
+            # Execute swap using multi-DEX router
+            console.print(f"[dim]Swapping {amount_eth} ETH for $COMPUTE via {self.dex_router.get_best_dex() or 'best DEX'}...[/dim]")
 
-            # Wait for receipt
-            receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+            success, result = self.dex_router.swap_eth_for_tokens(
+                amount_eth,
+                slippage_percent=self.config.slippage_percent
+            )
 
-            if receipt['status'] == 1:
+            if success:
                 console.print(f"[green]✓ Buy successful![/green]")
-                console.print(f"[dim]  TX: {self.w3.to_hex(tx_hash)[:20]}...[/dim]")
+                console.print(f"[dim]  TX: {result[:20]}...[/dim]")
                 self.successful_buys += 1
                 self.total_bought_eth += amount_eth
                 return True
             else:
-                console.print(f"[red]✗ Transaction failed[/red]")
-                console.print(f"[red]  Status: {receipt['status']}, Gas: {receipt['gasUsed']}[/red]")
+                console.print(f"[red]✗ Transaction failed: {result}[/red]")
                 self.failed_buys += 1
                 return False
                 
@@ -362,58 +332,20 @@ class VolumeBot:
             
             console.print(f"[dim]Selling {compute_balance:.4f} $COMPUTE...[/dim]")
             
-            # Approve router (limited approval for security)
-            decimals = self.compute_token.functions.decimals().call()
-            amount_units = int(compute_balance * (10 ** decimals))
-            
-            # Build approval
-            approve_tx = self.compute_token.functions.approve(
-                ROUTER,
-                amount_units
-            ).build_transaction({
-                'from': self.account.address,
-                'gas': 100000,
-                'gasPrice': self.w3.eth.gas_price,
-                'nonce': self.w3.eth.get_transaction_count(self.account.address),
-                'chainId': 8453
-            })
-            
-            signed_approve = self.account.sign_transaction(approve_tx)
-            approve_hash = self.w3.eth.send_raw_transaction(signed_approve.raw_transaction)
-            console.print(f"[dim]Approve TX: {self.w3.to_hex(approve_hash)}[/dim]")
-            self.w3.eth.wait_for_transaction_receipt(approve_hash, timeout=120)
+            # Execute swap using multi-DEX router
+            console.print(f"[dim]Swapping {compute_balance:.4f} $COMPUTE for ETH via {self.dex_router.get_best_dex() or 'best DEX'}...[/dim]")
 
-            # Build swap
-            deadline = int(time.time()) + 300
-            swap_tx = self.router.functions.exactInputSingle({
-                'tokenIn': COMPUTE_TOKEN,
-                'tokenOut': WETH,
-                'fee': 3000,
-                'recipient': self.account.address,
-                'deadline': deadline,
-                'amountIn': amount_units,
-                'amountOutMinimum': 0,
-                'sqrtPriceLimitX96': 0
-            }).build_transaction({
-                'from': self.account.address,
-                'gas': 300000,
-                'gasPrice': self.w3.eth.gas_price,
-                'nonce': self.w3.eth.get_transaction_count(self.account.address),
-                'chainId': 8453
-            })
+            success, result = self.dex_router.swap_tokens_for_eth(
+                compute_balance,
+                slippage_percent=self.config.slippage_percent
+            )
 
-            signed_swap = self.account.sign_transaction(swap_tx)
-            swap_hash = self.w3.eth.send_raw_transaction(signed_swap.raw_transaction)
-            console.print(f"[dim]Swap TX: {self.w3.to_hex(swap_hash)}[/dim]")
-            receipt = self.w3.eth.wait_for_transaction_receipt(swap_hash, timeout=120)
-
-            if receipt['status'] == 1:
+            if success:
                 console.print(f"[green]✓ Sell successful![/green]")
-                console.print(f"[dim]  TX: {self.w3.to_hex(swap_hash)[:20]}...[/dim]")
+                console.print(f"[dim]  TX: {result[:20]}...[/dim]")
                 return True
             else:
-                console.print("[red]✗ Sell transaction failed[/red]")
-                console.print(f"[red]  Status: {receipt['status']}, Gas: {receipt['gasUsed']}[/red]")
+                console.print(f"[red]✗ Sell failed: {result}[/red]")
                 return False
                 
         except Exception as e:
