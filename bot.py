@@ -316,12 +316,75 @@ class VolumeBot:
                     if test_router.has_library:
                         # Try to build the transaction (this will test encoding)
                         console.print("[dim][DRY RUN] Testing V4 transaction encoding...[/dim]")
-                        # Just verify pool discovery works
-                        console.print("[green]✓ [DRY RUN] V4 library loaded and ready[/green]")
+                        
+                        # Test building a V4 swap for COMPUTE
+                        from decimal import Decimal
+                        test_amount = Decimal('0.0001')  # Small test amount
+                        
+                        # Import library components
+                        from uniswap_universal_router_decoder import RouterCodec
+                        codec = RouterCodec()
+                        
+                        # Try to build chain
+                        chain = codec.encode.chain()
+                        
+                        # Build test pool key for COMPUTE
+                        weth = "0x4200000000000000000000000000000000000006"
+                        compute = "0x696381f39F17cAD67032f5f52A4924ce84e51BA3"
+                        
+                        # Sort currencies
+                        if weth.lower() < compute.lower():
+                            currency0, currency1 = weth, compute
+                            zero_for_one = True
+                        else:
+                            currency0, currency1 = compute, weth
+                            zero_for_one = False
+                        
+                        pool_key = {
+                            'currency0': currency0,
+                            'currency1': currency1,
+                            'fee': 500,
+                            'tickSpacing': 10,
+                            'hooks': '0x0000000000000000000000000000000000000000'
+                        }
+                        
+                        # Add wrap ETH
+                        from uniswap_universal_router_decoder import FunctionRecipient
+                        chain.wrap_eth(FunctionRecipient.ROUTER, int(test_amount * 1e18))
+                        
+                        # Add V4 swap
+                        chain.v4_swap(
+                            pool_key=pool_key,
+                            zero_for_one=zero_for_one,
+                            amount_in=int(test_amount * 1e18),
+                            amount_out_min=1,  # Minimal for test
+                            sqrt_price_limit_x96=0,
+                            hook_data=b''
+                        )
+                        
+                        # Build transaction
+                        tx = codec.build_transaction(
+                            chain=chain,
+                            from_address=self.account.address,
+                            deadline=int(time.time()) + 300,
+                            value=int(test_amount * 1e18)
+                        )
+                        
+                        console.print(f"[dim][DRY RUN] Commands: {tx.get('data', 'N/A')[:50]}...[/dim]")
+                        console.print("[green]✓ [DRY RUN] V4 transaction built successfully[/green]")
+                        
+                        # Show what commands will be executed
+                        console.print("[dim][DRY RUN] Command sequence:[/dim]")
+                        console.print("  1. WRAP_ETH - Wrap ETH to WETH")
+                        console.print("  2. V4_SWAP - Swap WETH for COMPUTE")
+                        console.print("  3. (Library handles settlement)")
+                        
                     else:
                         console.print("[red]✗ [DRY RUN] V4 library not installed[/red]")
                 except Exception as e:
                     console.print(f"[red]✗ [DRY RUN] V4 test failed: {e}[/red]")
+                    import traceback
+                    console.print(f"[dim]{traceback.format_exc()[:200]}...[/dim]")
             
             console.print("[green]✓ [DRY RUN] Routing validation complete[/green]")
             return True
