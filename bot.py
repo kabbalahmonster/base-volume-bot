@@ -228,10 +228,11 @@ class VolumeBot:
             console.print(f"[red]✗ Invalid private key: {e}[/red]")
             return False
         
-        # Setup DEX routers (1inch primary, MultiDEX fallback)
-        console.print("[dim]Initializing 1inch aggregator...[/dim]")
+        # Setup DEX routers (1inch primary, MultiDEX fallback, V4 for V4-only tokens)
+        console.print("[dim]Initializing DEX routers...[/dim]")
         self.oneinch = OneInchAggregator(self.w3, self.account)
         self.dex_router = MultiDEXRouter(self.w3, self.account, self.token_address)
+        self.v4_router = V4DirectRouter(self.w3, self.account)  # V4 Universal Router
         self.token_contract = self.w3.eth.contract(
             address=self.w3.to_checksum_address(self.token_address),
             abi=ERC20_ABI
@@ -352,6 +353,15 @@ class VolumeBot:
                     amount_eth,
                     slippage_percent=self.config.slippage_percent
                 )
+                
+                # If multi-DEX fails (e.g., no V2/V3 pools), try V4 Universal Router
+                if not success and "No DEX found" in str(result):
+                    console.print(f"[dim]No V2/V3 pools found, trying V4 Universal Router...[/dim]")
+                    success, result = self.v4_router.swap_eth_for_tokens(
+                        self.token_address,
+                        amount_eth,
+                        slippage_percent=self.config.slippage_percent
+                    )
 
             if success:
                 console.print(f"[green]✓ Buy successful![/green]")
@@ -410,6 +420,17 @@ class VolumeBot:
                     compute_balance,
                     slippage_percent=self.config.slippage_percent
                 )
+                
+                # If multi-DEX fails, try V4 Universal Router
+                if not success and "No DEX found" in str(result):
+                    console.print(f"[dim]No V2/V3 pools found, trying V4 Universal Router...[/dim]")
+                    token_decimals = self.token_contract.functions.decimals().call()
+                    success, result = self.v4_router.swap_tokens_for_eth(
+                        self.token_address,
+                        compute_balance,
+                        token_decimals=token_decimals,
+                        slippage_percent=self.config.slippage_percent
+                    )
 
             if success:
                 console.print(f"[green]✓ Sell successful![/green]")
