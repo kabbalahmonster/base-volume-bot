@@ -38,6 +38,7 @@ from wallet import SecureKeyManager, SecureWallet
 from oneinch_router import OneInchAggregator
 from dex_router import MultiDEXRouter
 from zerox_router import ZeroXAggregator
+from v4_router import V4DirectRouter
 
 # Constants
 COMPUTE_TOKEN = "0x696381f39F17cAD67032f5f52A4924ce84e51BA3"
