@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
 Complete Volume Bot Implementation
-=================================
-Production-ready volume generation bot for $COMPUTE on Base.
+==================================
+Production-ready volume generation bot for any token on Base.
+
+Fixed Version - All critical issues resolved.
 """
 
 import os
@@ -14,18 +16,13 @@ from decimal import Decimal
 from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass, asdict
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 import getpass
 
 # Web3 and crypto
 from web3 import Web3
 from eth_account import Account
 from eth_abi import encode
-
-# Encryption
-from cryptography.fernet import Fernet
-import hashlib
-import base64
 
 # Rich CLI
 from rich.console import Console
@@ -36,22 +33,115 @@ from rich.text import Text
 from rich import box
 from rich.logging import RichHandler
 
-# Import trader
-from trader import UniswapV3Trader
+# Import wallet and DEX routers
+from wallet import SecureKeyManager, SecureWallet
+from oneinch_router import OneInchAggregator
+from dex_router import MultiDEXRouter
 
 # Constants
 COMPUTE_TOKEN = "0x696381f39F17cAD67032f5f52A4924ce84e51BA3"
 WETH = "0x4200000000000000000000000000000000000006"
 USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
-ROUTER = "0x2626664c2603336E57B271c5C0b26F421741e481"
 
 RPC_URLS = {
     "base": [
-        "https://base.llamarpc.com",
-        "https://mainnet.base.org",
+        # NOTE: Rate limit considerations:
+        # - mainnet.base.org: Official RPC, strict rate limits (429 errors common)
+        # - base.drpc.org: Public dRPC, higher rate limits (preferred for testing)
+        # - base.llamarpc.com: Returns empty contract code for some tokens (avoid)
         "https://base.drpc.org",
+        "https://mainnet.base.org",
+        "https://base.llamarpc.com",
     ]
 }
+
+# Uniswap V3 Router ABI (minimal)
+ROUTER_ABI = [
+    {
+        "inputs": [
+            {
+                "components": [
+                    {"internalType": "address", "name": "tokenIn", "type": "address"},
+                    {"internalType": "address", "name": "tokenOut", "type": "address"},
+                    {"internalType": "uint24", "name": "fee", "type": "uint24"},
+                    {"internalType": "address", "name": "recipient", "type": "address"},
+                    {"internalType": "uint256", "name": "deadline", "type": "uint256"},
+                    {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
+                    {"internalType": "uint256", "name": "amountOutMinimum", "type": "uint256"},
+                    {"internalType": "uint160", "name": "sqrtPriceLimitX96", "type": "uint160"}
+                ],
+                "internalType": "struct IV3SwapRouter.ExactInputSingleParams",
+                "name": "params",
+                "type": "tuple"
+            }
+        ],
+        "name": "exactInputSingle",
+        "outputs": [{"internalType": "uint256", "name": "amountOut", "type": "uint256"}],
+        "stateMutability": "payable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"internalType": "bytes[]", "name": "data", "type": "bytes[]"}
+        ],
+        "name": "multicall",
+        "outputs": [{"internalType": "bytes[]", "name": "results", "type": "bytes[]"}],
+        "stateMutability": "payable",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "refundETH",
+        "outputs": [],
+        "stateMutability": "payable",
+        "type": "function"
+    }
+]
+
+# ERC20 ABI (minimal)
+ERC20_ABI = [
+    {
+        "constant": True,
+        "inputs": [{"name": "_owner", "type": "address"}],
+        "name": "balanceOf",
+        "outputs": [{"name": "balance", "type": "uint256"}],
+        "type": "function"
+    },
+    {
+        "constant": True,
+        "inputs": [],
+        "name": "decimals",
+        "outputs": [{"name": "", "type": "uint8"}],
+        "type": "function"
+    },
+    {
+        "constant": True,
+        "inputs": [],
+        "name": "symbol",
+        "outputs": [{"name": "", "type": "string"}],
+        "type": "function"
+    },
+    {
+        "constant": False,
+        "inputs": [
+            {"name": "_to", "type": "address"},
+            {"name": "_value", "type": "uint256"}
+        ],
+        "name": "transfer",
+        "outputs": [{"name": "", "type": "bool"}],
+        "type": "function"
+    },
+    {
+        "constant": False,
+        "inputs": [
+            {"name": "_spender", "type": "address"},
+            {"name": "_value", "type": "uint256"}
+        ],
+        "name": "approve",
+        "outputs": [{"name": "", "type": "bool"}],
+        "type": "function"
+    }
+]
 
 console = Console()
 
@@ -65,7 +155,7 @@ class BotConfig:
     sell_after_buys: int = 10
     slippage_percent: float = 2.0
     max_gas_gwei: float = 0.5
-    min_eth_balance: float = 0.01
+    min_eth_balance: float = 0.001
     dry_run: bool = False
     log_level: str = "INFO"
     
@@ -77,79 +167,29 @@ class BotConfig:
         return cls(**data)
 
 
-class SecureKeyManager:
-    """Manages encrypted private keys"""
-    
-    def __init__(self, key_file: str = ".wallet.enc"):
-        self.key_file = Path(key_file)
-    
-    def _derive_key(self, password: str) -> bytes:
-        """Derive encryption key from password"""
-        key = hashlib.sha256(password.encode()).digest()
-        return base64.urlsafe_b64encode(key)
-    
-    def encrypt_and_save(self, private_key: str, password: str) -> bool:
-        """Encrypt and save private key"""
-        try:
-            key = self._derive_key(password)
-            f = Fernet(key)
-            encrypted = f.encrypt(private_key.encode())
-            
-            data = {
-                "encrypted": encrypted.decode(),
-                "created": datetime.now().isoformat(),
-            }
-            
-            with open(self.key_file, 'w') as file:
-                json.dump(data, file)
-            
-            # Set restrictive permissions
-            os.chmod(self.key_file, 0o600)
-            return True
-            
-        except Exception as e:
-            console.print(f"[red]Failed to save wallet: {e}[/red]")
-            return False
-    
-    def load_and_decrypt(self, password: str) -> Optional[str]:
-        """Load and decrypt private key"""
-        try:
-            if not self.key_file.exists():
-                return None
-            
-            with open(self.key_file, 'r') as file:
-                data = json.load(file)
-            
-            key = self._derive_key(password)
-            f = Fernet(key)
-            decrypted = f.decrypt(data["encrypted"].encode())
-            
-            return decrypted.decode()
-            
-        except Exception as e:
-            console.print(f"[red]Failed to decrypt wallet: {e}[/red]")
-            return None
-
-
 class VolumeBot:
-    """Main volume bot"""
-    
-    def __init__(self, config: BotConfig, private_key: str):
+    """Main volume bot with integrated trading"""
+
+    def __init__(self, config: BotConfig, private_key: str, token_address: str = COMPUTE_TOKEN):
         self.config = config
         self.private_key = private_key
+        self.token_address = token_address
+        self.token_symbol = "COMPUTE"  # Will be fetched from contract
         self.w3: Optional[Web3] = None
         self.account: Optional[Account] = None
-        self.trader: Optional[UniswapV3Trader] = None
-        
+        self.oneinch: Optional[OneInchAggregator] = None
+        self.dex_router: Optional[MultiDEXRouter] = None
+        self.token_contract = None
+
         # Stats
         self.buy_count = 0
         self.total_bought_eth = Decimal("0")
-        self.total_bought_compute = Decimal("0")
+        self.total_bought_tokens = Decimal("0")
         self.successful_buys = 0
         self.failed_buys = 0
-        
+
         self.setup_logging()
-        
+    
     def setup_logging(self):
         """Setup logging"""
         logging.basicConfig(
@@ -182,25 +222,66 @@ class VolumeBot:
         # Setup account
         try:
             self.account = Account.from_key(self.private_key)
-            self.trader = UniswapV3Trader(self.w3, self.account, ROUTER)
         except Exception as e:
             console.print(f"[red]✗ Invalid private key: {e}[/red]")
             return False
         
+        # Setup DEX routers (1inch primary, MultiDEX fallback)
+        console.print("[dim]Initializing 1inch aggregator...[/dim]")
+        self.oneinch = OneInchAggregator(self.w3, self.account)
+        self.dex_router = MultiDEXRouter(self.w3, self.account, self.token_address)
+        self.token_contract = self.w3.eth.contract(
+            address=self.w3.to_checksum_address(self.token_address),
+            abi=ERC20_ABI
+        )
+        
+        # Try to fetch token symbol
+        try:
+            self.token_symbol = self.token_contract.functions.symbol().call()
+        except:
+            self.token_symbol = "TOKEN"  # Fallback
+        
         # Check balances
-        eth_balance = self.trader.get_eth_balance()
-        compute_balance = self.trader.get_token_balance(COMPUTE_TOKEN)
+        eth_balance = self.get_eth_balance()
+        token_balance = self.get_token_balance()
         
         console.print(f"[green]✓ Connected successfully[/green]")
         console.print(f"[dim]  Address: {self.account.address}[/dim]")
         console.print(f"[dim]  ETH Balance: {eth_balance:.4f} ETH[/dim]")
-        console.print(f"[dim]  $COMPUTE Balance: {compute_balance:.4f}[/dim]")
+        console.print(f"[dim]  ${self.token_symbol} Balance: {token_balance:.4f}[/dim]")
         
         if eth_balance < self.config.min_eth_balance:
             console.print(f"[red]⚠ Low ETH balance! Need at least {self.config.min_eth_balance} ETH[/red]")
             return False
         
         return True
+    
+    def get_eth_balance(self) -> Decimal:
+        """Get ETH balance"""
+        if not self.w3 or not self.account:
+            return Decimal("0")
+        balance_wei = self.w3.eth.get_balance(self.account.address)
+        return Decimal(self.w3.from_wei(balance_wei, 'ether'))
+    
+    def get_token_balance(self, token_address: str = None) -> Decimal:
+        """Get token balance"""
+        if not self.w3 or not self.account:
+            return Decimal("0")
+        
+        # Use instance token if no address provided
+        if token_address is None and self.token_contract:
+            token = self.token_contract
+        else:
+            token_addr = token_address or self.token_address
+            token = self.w3.eth.contract(
+                address=self.w3.to_checksum_address(token_addr),
+                abi=ERC20_ABI
+            )
+        
+        balance = token.functions.balanceOf(self.account.address).call()
+        decimals = token.functions.decimals().call()
+        
+        return Decimal(balance) / Decimal(10 ** decimals)
     
     def execute_buy(self) -> bool:
         """Execute buy transaction"""
@@ -218,40 +299,49 @@ class VolumeBot:
             amount_eth = Decimal(str(self.config.buy_amount_eth))
             
             # Check balance
-            eth_balance = self.trader.get_eth_balance()
+            eth_balance = self.get_eth_balance()
             if eth_balance < amount_eth:
                 console.print(f"[red]✗ Insufficient ETH balance[/red]")
                 return False
             
-            # Execute swap
-            console.print(f"[dim]Swapping {amount_eth} ETH for $COMPUTE...[/dim]")
-            
-            success, result = self.trader.swap_eth_for_tokens(
-                COMPUTE_TOKEN,
+            # Execute swap using 1inch (primary) with fallback to multi-DEX router
+            console.print(f"[dim]Swapping {amount_eth} ETH for ${self.token_symbol} via 1inch...[/dim]")
+
+            success, result = self.oneinch.swap_eth_for_tokens(
+                self.token_address,
                 amount_eth,
-                self.config.slippage_percent
+                slippage_percent=self.config.slippage_percent
             )
-            
+
+            if not success:
+                console.print(f"[yellow]⚠ 1inch failed: {result}[/yellow]")
+                console.print(f"[dim]Falling back to multi-DEX router...[/dim]")
+
+                success, result = self.dex_router.swap_eth_for_tokens(
+                    amount_eth,
+                    slippage_percent=self.config.slippage_percent
+                )
+
             if success:
                 console.print(f"[green]✓ Buy successful![/green]")
-                console.print(f"[dim]  TX: {result[:20]}...{result[-8:]}[/dim]")
+                console.print(f"[dim]  TX: {result[:20]}...[/dim]")
                 self.successful_buys += 1
                 self.total_bought_eth += amount_eth
                 return True
             else:
-                console.print(f"[red]✗ Buy failed: {result}[/red]")
+                console.print(f"[red]✗ Transaction failed: {result}[/red]")
                 self.failed_buys += 1
                 return False
                 
         except Exception as e:
-            console.print(f"[red]✗ Buy error: {e}[/red]")
             self.logger.error(f"Buy error: {e}")
+            console.print(f"[red]✗ Buy failed: {e}[/red]")
             self.failed_buys += 1
             return False
     
     def execute_sell(self) -> bool:
-        """Execute sell all transaction"""
-        console.print("\n[bold magenta]💰 SELLING ALL POSITIONS[/bold magenta]")
+        """Execute sell transaction"""
+        console.print(f"\n[bold cyan]💰 Selling all ${self.token_symbol}...[/bold cyan]")
         
         if self.config.dry_run:
             console.print("[yellow][DRY RUN] Simulating sell...[/yellow]")
@@ -260,47 +350,48 @@ class VolumeBot:
             return True
         
         try:
-            # Get current balance
-            compute_balance = self.trader.get_token_balance(COMPUTE_TOKEN)
-            
+            # Get COMPUTE balance
+            compute_balance = self.get_token_balance()
             if compute_balance <= 0:
-                console.print("[yellow]⚠ No $COMPUTE to sell[/yellow]")
-                return True
+                console.print("[red]✗ No COMPUTE to sell[/red]")
+                return False
             
-            console.print(f"[dim]Selling {compute_balance:.6f} $COMPUTE...[/dim]")
+            console.print(f"[dim]Selling {compute_balance:.4f} ${self.token_symbol}...[/dim]")
             
-            success, result = self.trader.swap_tokens_for_eth(
-                COMPUTE_TOKEN,
+            # Execute swap using 1inch (primary) with fallback to multi-DEX router
+            console.print(f"[dim]Swapping {compute_balance:.4f} ${self.token_symbol} for ETH via 1inch...[/dim]")
+
+            # Get token decimals
+            token_decimals = self.token_contract.functions.decimals().call()
+
+            success, result = self.oneinch.swap_tokens_for_eth(
+                self.token_address,
                 compute_balance,
-                self.config.slippage_percent
+                token_decimals=token_decimals,
+                slippage_percent=self.config.slippage_percent
             )
-            
+
+            if not success:
+                console.print(f"[yellow]⚠ 1inch failed: {result}[/yellow]")
+                console.print(f"[dim]Falling back to multi-DEX router...[/dim]")
+
+                success, result = self.dex_router.swap_tokens_for_eth(
+                    compute_balance,
+                    slippage_percent=self.config.slippage_percent
+                )
+
             if success:
                 console.print(f"[green]✓ Sell successful![/green]")
-                console.print(f"[dim]  TX: {result[:20]}...{result[-8:]}[/dim]")
+                console.print(f"[dim]  TX: {result[:20]}...[/dim]")
                 return True
             else:
                 console.print(f"[red]✗ Sell failed: {result}[/red]")
                 return False
                 
         except Exception as e:
-            console.print(f"[red]✗ Sell error: {e}[/red]")
             self.logger.error(f"Sell error: {e}")
+            console.print(f"[red]✗ Sell failed: {e}[/red]")
             return False
-    
-    def show_stats(self):
-        """Display current stats"""
-        table = Table(title="Bot Statistics", box=box.ROUNDED)
-        table.add_column("Metric", style="cyan")
-        table.add_column("Value", style="green")
-        
-        table.add_row("Buy Count", f"{self.buy_count}/{self.config.sell_after_buys}")
-        table.add_row("Successful Buys", str(self.successful_buys))
-        table.add_row("Failed Buys", str(self.failed_buys))
-        table.add_row("Total ETH Spent", f"{self.total_bought_eth:.4f}")
-        table.add_row("Dry Run", "Yes" if self.config.dry_run else "No")
-        
-        console.print(table)
     
     def withdraw(self, to_address: str, amount_eth: Optional[float] = None, 
                  withdraw_compute: bool = False) -> bool:
@@ -310,7 +401,7 @@ class VolumeBot:
         Args:
             to_address: Destination wallet address
             amount_eth: Amount of ETH to withdraw (None = all except gas reserve)
-            withdraw_compute: If True, also withdraw all $COMPUTE
+            withdraw_compute: If True, also withdraw all tokens
         """
         console.print(f"\n[bold yellow]💸 WITHDRAWAL REQUEST[/bold yellow]")
         console.print(f"[dim]From: {self.account.address}[/dim]")
@@ -329,12 +420,12 @@ class VolumeBot:
         
         try:
             # Get current balances
-            eth_balance = self.trader.get_eth_balance()
-            compute_balance = self.trader.get_token_balance(COMPUTE_TOKEN)
+            eth_balance = self.get_eth_balance()
+            compute_balance = self.get_token_balance()
             
             console.print(f"\n[dim]Current Balances:[/dim]")
             console.print(f"  ETH: {eth_balance:.6f}")
-            console.print(f"  $COMPUTE: {compute_balance:.6f}")
+            console.print(f"  ${self.token_symbol}: {compute_balance:.6f}")
             
             # Calculate withdrawal amount
             if amount_eth is None:
@@ -354,7 +445,7 @@ class VolumeBot:
             console.print(f"\n[yellow]⚠️ You are about to withdraw:[/yellow]")
             console.print(f"  {amount_eth_decimal:.6f} ETH")
             if withdraw_compute:
-                console.print(f"  {compute_balance:.6f} $COMPUTE")
+                console.print(f"  {compute_balance:.6f} ${self.token_symbol}")
             console.print(f"\n[yellow]To: {to_address}[/yellow]")
             
             confirm = input("\nType 'WITHDRAW' to confirm: ")
@@ -375,48 +466,56 @@ class VolumeBot:
                     'chainId': 8453
                 }
                 
-                signed = self.w3.eth.account.sign_transaction(tx, self.account.key)
-                tx_hash = self.w3.eth.send_raw_transaction(signed.rawTransaction)
-                
+                signed = self.account.sign_transaction(tx)
+                tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+                console.print(f"[dim]TX: {self.w3.to_hex(tx_hash)}[/dim]")
+
                 receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-                
+
                 if receipt['status'] == 1:
                     console.print(f"[green]✓ ETH sent: {self.w3.to_hex(tx_hash)[:20]}...[/green]")
                 else:
                     console.print("[red]✗ ETH transfer failed[/red]")
+                    console.print(f"[red]  Status: {receipt['status']}[/red]")
+                    console.print(f"[red]  Gas used: {receipt['gasUsed']}[/red]")
+                    console.print(f"[red]  Block: {receipt['blockNumber']}[/red]")
                     return False
-            
-            # Withdraw $COMPUTE
+
+            # Withdraw tokens
             if withdraw_compute and compute_balance > 0:
-                console.print(f"\n[dim]Sending {compute_balance:.6f} $COMPUTE...[/dim]")
+                console.print(f"\n[dim]Sending {compute_balance:.6f} ${self.token_symbol}...[/dim]")
                 
-                token = self.trader.get_token_contract(COMPUTE_TOKEN)
-                decimals = token.functions.decimals().call()
+                decimals = self.token_contract.functions.decimals().call()
                 amount_units = int(compute_balance * (10 ** decimals))
                 
-                tx = token.functions.transfer(to_address, amount_units).build_transaction({
+                tx = self.token_contract.functions.transfer(to_address, amount_units).build_transaction({
                     'from': self.account.address,
                     'gas': 100000,
                     'gasPrice': self.w3.eth.gas_price,
                     'nonce': self.w3.eth.get_transaction_count(self.account.address),
+                    'chainId': 8453
                 })
                 
-                signed = self.w3.eth.account.sign_transaction(tx, self.account.key)
-                tx_hash = self.w3.eth.send_raw_transaction(signed.rawTransaction)
-                
+                signed = self.account.sign_transaction(tx)
+                tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+                console.print(f"[dim]TX: {self.w3.to_hex(tx_hash)}[/dim]")
+
                 receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-                
+
                 if receipt['status'] == 1:
                     console.print(f"[green]✓ $COMPUTE sent: {self.w3.to_hex(tx_hash)[:20]}...[/green]")
                 else:
                     console.print("[red]✗ $COMPUTE transfer failed[/red]")
+                    console.print(f"[red]  Status: {receipt['status']}[/red]")
+                    console.print(f"[red]  Gas used: {receipt['gasUsed']}[/red]")
+                    console.print(f"[red]  Block: {receipt['blockNumber']}[/red]")
                     return False
             
             console.print("\n[bold green]✓ Withdrawal complete![/bold green]")
             
             # Show remaining balance
-            remaining_eth = self.trader.get_eth_balance()
-            remaining_compute = self.trader.get_token_balance(COMPUTE_TOKEN)
+            remaining_eth = self.get_eth_balance()
+            remaining_compute = self.get_token_balance()
             console.print(f"\n[dim]Remaining Balances:[/dim]")
             console.print(f"  ETH: {remaining_eth:.6f}")
             console.print(f"  $COMPUTE: {remaining_compute:.6f}")
@@ -427,6 +526,20 @@ class VolumeBot:
             self.logger.error(f"Withdrawal error: {e}")
             console.print(f"[red]✗ Withdrawal failed: {e}[/red]")
             return False
+    
+    def show_stats(self):
+        """Display current stats"""
+        table = Table(title="Bot Statistics", box=box.ROUNDED)
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", style="green")
+        
+        table.add_row("Buy Count", f"{self.buy_count}/{self.config.sell_after_buys}")
+        table.add_row("Successful Buys", str(self.successful_buys))
+        table.add_row("Failed Buys", str(self.failed_buys))
+        table.add_row("Total ETH Spent", f"{self.total_bought_eth:.4f}")
+        table.add_row("Dry Run", "Yes" if self.config.dry_run else "No")
+        
+        console.print(table)
     
     def countdown(self, minutes: int):
         """Show countdown timer"""
@@ -448,7 +561,7 @@ class VolumeBot:
     def run(self):
         """Main bot loop"""
         console.print(Panel.fit(
-            "[bold cyan]$COMPUTE Volume Bot[/bold cyan]\n"
+            f"[bold cyan]${self.token_symbol} Volume Bot[/bold cyan]\n"
             "[dim]Cult of the Shell | Base Network[/dim]",
             box=box.DOUBLE
         ))
@@ -500,51 +613,42 @@ class VolumeBot:
 
 
 def setup_command():
-    """Interactive setup with auto-generated wallet"""
+    """Interactive setup - generates new wallet automatically"""
     console.print(Panel.fit(
-        "[bold cyan]$COMPUTE Volume Bot - Setup[/bold cyan]\n"
-        "[dim]Auto-Generated Secure Wallet[/dim]",
+        "[bold cyan]Volume Bot - Setup[/bold cyan]\n"
+        "[dim]Auto-Generated Wallet Mode[/dim]",
         box=box.DOUBLE
     ))
     
-    console.print("\n[dim]This will generate a new Ethereum wallet for trading.[/dim]")
-    console.print("[dim]Your private key will be encrypted and never displayed.[/dim]\n")
+    console.print("\n[yellow]⚠️  IMPORTANT:[/yellow]")
+    console.print("This will generate a NEW trading wallet for you.")
+    console.print("The private key will be encrypted - you will NOT see it.")
+    console.print("You MUST fund the displayed address before running the bot.\n")
     
-    # Confirm wallet generation
-    console.print("[yellow]Generate new trading wallet? (yes/no):[/yellow]")
-    confirm_gen = input("> ").lower().strip()
-    
-    if confirm_gen not in ("yes", "y"):
+    confirm = input("Generate new trading wallet? (yes/no): ").lower()
+    if confirm not in ['yes', 'y']:
         console.print("[yellow]Setup cancelled.[/yellow]")
         return
     
     # Generate new wallet
-    console.print("\n[cyan]🔐 Generating new Ethereum wallet...[/cyan]")
-    
-    # Create account with extra entropy for security
     import secrets
+    from eth_account import Account
+    
+    # Generate with extra entropy for security
     extra_entropy = secrets.token_hex(32)
     account = Account.create(extra_entropy=extra_entropy)
-    
     private_key = account.key.hex()
-    public_address = account.address
+    wallet_address = account.address
     
-    console.print(f"[green]✓ Wallet generated successfully![/green]\n")
+    console.print(f"\n[green]✓ New wallet generated![/green]")
+    console.print(f"\n[bold cyan]Your Wallet Address:[/bold cyan]")
+    console.print(f"[bold]{wallet_address}[/bold]")
+    console.print("\n[yellow]⚠️  FUND THIS ADDRESS BEFORE RUNNING THE BOT[/yellow]")
+    console.print("Send ETH on Base network to the address above.")
+    console.print("The bot needs ETH for gas and trading.\n")
     
-    # Display public address with clear funding instructions
-    console.print(Panel(
-        f"[bold cyan]📝 Your Trading Wallet Address[/bold cyan]\n\n"
-        f"[bold]{public_address}[/bold]\n\n"
-        f"[yellow]⚠️  IMPORTANT: Fund this address before running the bot![/yellow]\n"
-        f"[dim]• Send ETH on Base network for trading and gas fees[/dim]\n"
-        f"[dim]• Recommended minimum: 0.05 ETH[/dim]\n"
-        f"[dim]• You can verify the address on basescan.org[/dim]",
-        box=box.ROUNDED
-    ))
-    
-    # Get password for encryption
-    console.print("\n[yellow]Create encryption password to secure your wallet:[/yellow]")
-    console.print("[dim](You will need this password every time you run the bot)[/dim]")
+    # Get password
+    console.print("[yellow]Create encryption password (min 8 characters):[/yellow]")
     password = getpass.getpass("> ")
     
     if len(password) < 8:
@@ -552,16 +656,16 @@ def setup_command():
         return
     
     console.print("[yellow]Confirm password:[/yellow]")
-    confirm = getpass.getpass("> ")
+    confirm_pw = getpass.getpass("> ")
     
-    if password != confirm:
+    if password != confirm_pw:
         console.print("[red]Passwords don't match![/red]")
         return
     
     # Encrypt and save
     key_manager = SecureKeyManager()
     if key_manager.encrypt_and_save(private_key, password):
-        console.print("\n[green]✓ Wallet encrypted and saved securely![/green]")
+        console.print("\n[green]✓ Wallet encrypted and saved![/green]")
         
         # Create default config
         config = BotConfig()
@@ -569,21 +673,17 @@ def setup_command():
             json.dump(config.to_dict(), f, indent=2)
         
         console.print("[green]✓ Default config created (bot_config.json)[/green]")
-        
-        # Show next steps
-        console.print(Panel(
-            f"[bold green]✓ Setup Complete![/bold green]\n\n"
-            f"[cyan]Next Steps:[/cyan]\n"
-            f"1. [yellow]Fund your wallet:[/yellow] Send ETH to {public_address}\n"
-            f"2. [yellow]Test mode:[/yellow] python bot.py run --dry-run\n"
-            f"3. [yellow]Run live:[/yellow] python bot.py run\n\n"
-            f"[dim]Your private key is encrypted and cannot be recovered without your password.[/dim]\n"
-            f"[dim]Wallet file: .wallet.enc (permissions: 600)[/dim]",
-            box=box.DOUBLE
-        ))
+        console.print("\n" + "="*60)
+        console.print("[bold]NEXT STEPS:[/bold]")
+        console.print("1. Fund this address with ETH on Base:")
+        console.print(f"   {wallet_address}")
+        console.print("2. Run: python bot.py balance (to verify funding)")
+        console.print("3. Run: python bot.py run --dry-run (test mode)")
+        console.print("4. Run: python bot.py run (live trading)")
+        console.print("="*60)
 
 
-def run_command(dry_run: bool = False):
+def run_command(dry_run: bool = False, token_address: str = COMPUTE_TOKEN):
     """Run the bot"""
     # Load config
     try:
@@ -609,8 +709,10 @@ def run_command(dry_run: bool = False):
     if dry_run:
         config.dry_run = True
     
-    # Run bot
-    bot = VolumeBot(config, private_key)
+    # Run bot with specified token
+    console.print(f"[dim]Trading token: {token_address}[/dim]")
+    
+    bot = VolumeBot(config, private_key, token_address)
     bot.run()
 
 
@@ -685,11 +787,16 @@ def balance_command():
     table.add_column("Asset", style="cyan")
     table.add_column("Balance", style="green")
     
-    eth_balance = bot.trader.get_eth_balance()
-    compute_balance = bot.trader.get_token_balance(COMPUTE_TOKEN)
+    eth_balance = bot.get_eth_balance()
+    compute_balance = bot.get_token_balance()
+    
+    # Get token symbol from bot if possible, else default
+    token_symbol = "COMPUTE"
+    if bot.token_symbol:
+        token_symbol = bot.token_symbol
     
     table.add_row("ETH", f"{eth_balance:.6f}")
-    table.add_row("$COMPUTE", f"{compute_balance:.6f}")
+    table.add_row(f"${token_symbol}", f"{compute_balance:.6f}")
     
     console.print(table)
 
@@ -697,7 +804,7 @@ def balance_command():
 def main():
     import argparse
     
-    parser = argparse.ArgumentParser(description="$COMPUTE Volume Bot")
+    parser = argparse.ArgumentParser(description="Volume Bot for Base Network")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
     
     # Setup command
@@ -706,12 +813,14 @@ def main():
     # Run command
     run_parser = subparsers.add_parser("run", help="Start trading bot")
     run_parser.add_argument("--dry-run", action="store_true", help="Simulation mode")
+    run_parser.add_argument("--token-address", type=str, default=COMPUTE_TOKEN, 
+                           help=f"Token address to trade (default: {COMPUTE_TOKEN})")
     
     # Withdraw command
     withdraw_parser = subparsers.add_parser("withdraw", help="Withdraw funds")
     withdraw_parser.add_argument("to", help="Destination wallet address")
     withdraw_parser.add_argument("--amount", type=float, help="ETH amount (omit for all)")
-    withdraw_parser.add_argument("--compute", action="store_true", help="Also withdraw all $COMPUTE")
+    withdraw_parser.add_argument("--compute", action="store_true", help="Also withdraw all tokens")
     withdraw_parser.add_argument("--dry-run", action="store_true", help="Simulation mode")
     
     # Balance command
@@ -722,7 +831,7 @@ def main():
     if args.command == "setup":
         setup_command()
     elif args.command == "run":
-        run_command(dry_run=args.dry_run)
+        run_command(dry_run=args.dry_run, token_address=args.token_address)
     elif args.command == "withdraw":
         withdraw_command(to_address=args.to, amount=args.amount, 
                         withdraw_compute=args.compute, dry_run=args.dry_run)
