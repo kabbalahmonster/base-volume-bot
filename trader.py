@@ -496,19 +496,34 @@ class ComputeTrader:
             logger.exception("Sell failed")
             return {"success": False, "error": str(e)}
     
+    # Security: Use exact approvals with small buffer instead of unlimited (CRITICAL-002 fix)
+    APPROVAL_BUFFER_PERCENT = 1.01  # 1% buffer above required amount
+    
     async def _ensure_approval(self, token_address: str, spender: str, amount: int):
-        """Ensure token approval for spender."""
+        """
+        Ensure token approval for spender with exact amount + buffer.
+        
+        SECURITY FIX: Uses exact approval with small buffer instead of unlimited (max_uint).
+        This prevents rogue contracts from draining all token holdings.
+        
+        Args:
+            token_address: Token contract address
+            spender: Address to approve
+            amount: Amount needed for the transaction
+        """
         token = self.web3.eth.contract(address=token_address, abi=ERC20_ABI)
         
         current_allowance = token.functions.allowance(self.wallet.address, spender).call()
         
+        # Calculate approval amount with buffer (not unlimited!)
+        approval_amount = int(amount * self.APPROVAL_BUFFER_PERCENT)
+        
         if current_allowance < amount:
-            logger.info(f"Approving {spender} to spend tokens...")
+            logger.info(f"Approving {spender} to spend {approval_amount} tokens (with 1% buffer)...")
             
-            # Approve max uint256
-            max_uint = 2**256 - 1
-            
-            tx = token.functions.approve(spender, max_uint).build_transaction({
+            # SECURITY FIX: Use exact approval amount + buffer, NOT max_uint
+            # This limits exposure if the router contract is compromised
+            tx = token.functions.approve(spender, approval_amount).build_transaction({
                 'from': self.wallet.address,
                 'nonce': self.wallet.get_nonce(),
                 'gas': 100000,

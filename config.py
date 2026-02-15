@@ -1,8 +1,14 @@
 """
-Configuration Management Module
+Configuration Management Module (HARDENED VERSION)
 
 Handles secure storage of configuration with encrypted private keys.
 Uses Fernet symmetric encryption with password-derived keys.
+
+SECURITY CHANGES:
+- Fixed CRITICAL-003: Increased KDF iterations to 600,000
+- Fixed HIGH-003: Added gas buffer limits
+- Fixed HIGH-004: Added transaction confirmation threshold
+- Added comprehensive input validation
 """
 
 import os
@@ -11,7 +17,7 @@ import base64
 import getpass
 from pathlib import Path
 from typing import Dict, Any, Optional
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, fields
 
 import yaml
 from cryptography.fernet import Fernet
@@ -23,9 +29,19 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+# Security constants
+MAX_GAS_BUFFER = 2.0  # Maximum allowed gas buffer multiplier
+MIN_GAS_BUFFER = 1.0  # Minimum gas buffer
+MAX_KDF_ITERATIONS = 1_000_000  # Upper limit for KDF iterations
+MIN_KDF_ITERATIONS = 600_000  # OWASP 2023 minimum
+DEFAULT_KDF_ITERATIONS = 600_000
+
+HIGH_VALUE_THRESHOLD_ETH = 0.5  # Transactions above this require confirmation
+
+
 @dataclass
 class Config:
-    """Bot configuration settings."""
+    """Bot configuration settings with security validation."""
     
     # Network
     rpc_url: str = "https://mainnet.base.org"
@@ -48,7 +64,11 @@ class Config:
     # Gas settings
     max_gas_price_gwei: float = 5.0
     slippage_percent: float = 2.0
-    gas_limit_buffer: float = 1.2  # 20% buffer
+    _gas_limit_buffer: float = 1.2  # 20% buffer - private to enforce limits
+    
+    # Security settings
+    high_value_threshold_eth: float = HIGH_VALUE_THRESHOLD_ETH
+    require_confirmation_for_high_value: bool = True
     
     # Security
     encrypted_private_key: Optional[str] = None
@@ -71,13 +91,85 @@ class Config:
     # 0x API (optional - preferred for V4 support)
     zerox_api_key: Optional[str] = None
     
+    def __post_init__(self):
+        """Validate configuration after initialization."""
+        self._validate()
+    
+    def _validate(self):
+        """Validate all configuration values."""
+        # Validate buy amount (must be positive and reasonable)
+        if self.buy_amount_eth <= 0:
+            raise ValueError(f"buy_amount_eth must be positive, got {self.buy_amount_eth}")
+        if self.buy_amount_eth > 10:
+            raise ValueError(f"buy_amount_eth seems unreasonably high: {self.buy_amount_eth}")
+        
+        # Validate slippage (must be between 0 and 100)
+        if not 0 < self.slippage_percent <= 100:
+            raise ValueError(f"slippage_percent must be between 0 and 100, got {self.slippage_percent}")
+        
+        # Validate gas price (must be positive)
+        if self.max_gas_price_gwei <= 0:
+            raise ValueError(f"max_gas_price_gwei must be positive, got {self.max_gas_price_gwei}")
+        
+        # Validate gas buffer
+        if not MIN_GAS_BUFFER <= self._gas_limit_buffer <= MAX_GAS_BUFFER:
+            raise ValueError(
+                f"gas_limit_buffer must be between {MIN_GAS_BUFFER} and {MAX_GAS_BUFFER}, "
+                f"got {self._gas_limit_buffer}"
+            )
+        
+        # Validate addresses have correct checksum
+        self._validate_address(self.compute_token, "compute_token")
+        self._validate_address(self.weth_address, "weth_address")
+        self._validate_address(self.router_address, "router_address")
+        self._validate_address(self.quoter_address, "quoter_address")
+        self._validate_address(self.factory_address, "factory_address")
+        
+        # Validate chain ID
+        if self.chain_id not in (8453, 1, 5, 11155111):  # Base, Mainnet, Goerli, Sepolia
+            logger.warning(f"Unusual chain_id: {self.chain_id}")
+    
+    def _validate_address(self, address: str, field_name: str):
+        """Validate an Ethereum address has proper checksum."""
+        from web3 import Web3
+        
+        if not address:
+            raise ValueError(f"{field_name} cannot be empty")
+        
+        if not Web3.is_address(address):
+            raise ValueError(f"{field_name} is not a valid address: {address}")
+        
+        try:
+            # This will raise if checksum is invalid
+            Web3.to_checksum_address(address)
+        except ValueError:
+            raise ValueError(f"{field_name} has invalid checksum: {address}")
+    
+    @property
+    def gas_limit_buffer(self) -> float:
+        """Get gas limit buffer with enforced limits."""
+        return self._gas_limit_buffer
+    
+    @gas_limit_buffer.setter
+    def gas_limit_buffer(self, value: float):
+        """Set gas limit buffer with validation."""
+        if not MIN_GAS_BUFFER <= value <= MAX_GAS_BUFFER:
+            raise ValueError(
+                f"gas_limit_buffer must be between {MIN_GAS_BUFFER} and {MAX_GAS_BUFFER}"
+            )
+        self._gas_limit_buffer = value
+    
+    def is_high_value_transaction(self, amount_eth: float) -> bool:
+        """Check if a transaction amount exceeds the high-value threshold."""
+        return self.require_confirmation_for_high_value and amount_eth >= self.high_value_threshold_eth
+    
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary (excluding sensitive data)."""
         return asdict(self)
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Config":
-        """Create Config from dictionary."""
+        """Create Config from dictionary with validation."""
         # Filter only valid fields
         valid_fields = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
         return cls(**valid_fields)
@@ -88,7 +180,7 @@ class ConfigManager:
     
     def __init__(self, config_path: Path = Path("./bot_config.yaml")):
         self.config_path = Path(config_path)
-        self._kdf_iterations = 480000  # OWASP recommended minimum
+        self._kdf_iterations = DEFAULT_KDF_ITERATIONS  # CRITICAL-003 FIX
     
     def _derive_key(self, password: str, salt: bytes) -> bytes:
         """Derive encryption key from password using PBKDF2."""
@@ -186,23 +278,34 @@ class ConfigManager:
             return yaml.safe_load(f)
     
     def _save_config(self, config: Config):
-        """Save configuration to YAML file."""
+        """Save configuration to YAML file with atomic write."""
         # Ensure directory exists
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         
         data = config.to_dict()
         
-        with open(self.config_path, 'w') as f:
+        # Atomic write: write to temp file first
+        temp_path = self.config_path.with_suffix('.tmp')
+        with open(temp_path, 'w') as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
         
-        # Set restrictive permissions (owner read/write only)
-        os.chmod(self.config_path, 0o600)
+        # Set restrictive permissions before rename
+        os.chmod(temp_path, 0o600)
+        
+        # Atomic rename
+        temp_path.rename(self.config_path)
         
         logger.info(f"Configuration saved to {self.config_path}")
     
     def update_config(self, updates: Dict[str, Any], password: Optional[str] = None):
         """Update configuration values."""
         data = self.read_raw_config()
+        
+        # Validate updates
+        for key, value in updates.items():
+            if key in ['encrypted_private_key', 'salt'] and password is None:
+                raise ValueError("Password required to update encrypted fields")
+        
         data.update(updates)
         
         config = Config.from_dict(data)
@@ -259,10 +362,14 @@ buy_interval_seconds: 300
 sell_after_buys: 10
 pool_fee: 3000
 
-# Gas Settings
+# Gas Settings (buffer must be 1.0 - 2.0)
 max_gas_price_gwei: 5.0
 slippage_percent: 2.0
 gas_limit_buffer: 1.2
+
+# Security Settings
+high_value_threshold_eth: 0.5
+require_confirmation_for_high_value: true
 
 # Operation Settings
 dry_run: false

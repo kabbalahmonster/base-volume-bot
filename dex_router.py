@@ -18,6 +18,12 @@ from decimal import Decimal
 from dataclasses import dataclass
 from web3 import Web3
 from eth_account import Account
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+
+class TransactionError(Exception):
+    """Custom exception for transaction failures."""
+    pass
 
 
 # DEX Configuration
@@ -505,6 +511,22 @@ class MultiDEXRouter:
         """Get the best DEX key."""
         return self.best_dex
     
+    def _estimate_gas(self, tx_dict: Dict, default: int = 300000) -> int:
+        """Estimate gas with safety buffer."""
+        try:
+            estimated = self.w3.eth.estimate_gas(tx_dict)
+            # Add 20% buffer for safety
+            return int(estimated * 1.2)
+        except Exception as e:
+            print(f"[dim]Gas estimation failed: {e}, using default[/dim]")
+            return default
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type(TransactionError),
+        reraise=True
+    )
     def swap_eth_for_tokens(self, amount_eth: Decimal, slippage_percent: float = 2.0) -> Tuple[bool, str]:
         """
         Swap ETH for tokens using the best available DEX.
@@ -535,6 +557,8 @@ class MultiDEXRouter:
                 expected_out = amounts_out[-1]
                 min_out = int(expected_out * (100 - slippage_percent) / 100)
                 
+                print(f"[dim]Expected: {expected_out}, Min with {slippage_percent}% slippage: {min_out}[/dim]")
+                
                 # Build transaction
                 deadline = int(self.w3.eth.get_block('latest')['timestamp']) + 300
                 tx = router.functions.swapExactETHForTokens(
@@ -545,11 +569,14 @@ class MultiDEXRouter:
                 ).build_transaction({
                     'from': self.account.address,
                     'value': amount_in_wei,
-                    'gas': 300000,
                     'gasPrice': self.w3.eth.gas_price,
                     'nonce': self.w3.eth.get_transaction_count(self.account.address),
                     'chainId': 8453
                 })
+                
+                # Estimate gas instead of hardcoded
+                tx['gas'] = self._estimate_gas(tx, 300000)
+                print(f"[dim]Gas estimated: {tx['gas']}[/dim]")
                 
                 # Sign and send
                 signed = self.account.sign_transaction(tx)
@@ -562,7 +589,7 @@ class MultiDEXRouter:
                 if receipt['status'] == 1:
                     return True, tx_hex
                 else:
-                    return False, f"Aerodrome swap failed (status={receipt['status']}) - TX: {tx_hex}"
+                    raise TransactionError(f"Aerodrome swap failed (status={receipt['status']}) - TX: {tx_hex}")
                 
             elif dex_config["type"] == "uniswap_v2":
                 # V2-style swap
@@ -572,6 +599,8 @@ class MultiDEXRouter:
                 amounts_out = router.functions.getAmountsOut(amount_in_wei, path).call()
                 expected_out = amounts_out[-1]
                 min_out = int(expected_out * (100 - slippage_percent) / 100)
+                
+                print(f"[dim]Expected: {expected_out}, Min with {slippage_percent}% slippage: {min_out}[/dim]")
                 
                 # Build transaction
                 deadline = int(self.w3.eth.get_block('latest')['timestamp']) + 300
@@ -583,11 +612,13 @@ class MultiDEXRouter:
                 ).build_transaction({
                     'from': self.account.address,
                     'value': amount_in_wei,
-                    'gas': 300000,
                     'gasPrice': self.w3.eth.gas_price,
                     'nonce': self.w3.eth.get_transaction_count(self.account.address),
                     'chainId': 8453
                 })
+                
+                # Estimate gas
+                tx['gas'] = self._estimate_gas(tx, 300000)
                 
                 # Sign and send
                 signed = self.account.sign_transaction(tx)
@@ -600,7 +631,7 @@ class MultiDEXRouter:
                 if receipt['status'] == 1:
                     return True, tx_hex
                 else:
-                    return False, f"V2 swap failed (status={receipt['status']}) - TX: {tx_hex}"
+                    raise TransactionError(f"V2 swap failed (status={receipt['status']}) - TX: {tx_hex}")
 
             elif dex_config["type"] == "uniswap_v3":
                 # V3 swap - use the fee and pool found during discovery
@@ -618,7 +649,6 @@ class MultiDEXRouter:
                 # approval from the user's wallet, not from router's internal balance.
                 
                 deadline = int(self.w3.eth.get_block('latest')['timestamp']) + 300
-                min_out = 0  # Would use proper quoting in production
                 
                 # Initialize WETH contract
                 weth_contract = self.w3.eth.contract(address=self.weth, abi=WETH_ABI)
@@ -635,11 +665,12 @@ class MultiDEXRouter:
                     wrap_tx = weth_contract.functions.deposit().build_transaction({
                         'from': self.account.address,
                         'value': amount_in_wei,
-                        'gas': 100000,
                         'gasPrice': self.w3.eth.gas_price,
                         'nonce': nonce,
                         'chainId': 8453
                     })
+                    # Estimate gas for wrap
+                    wrap_tx['gas'] = self._estimate_gas(wrap_tx, 100000)
                     signed_wrap = self.account.sign_transaction(wrap_tx)
                     wrap_hash = self.w3.eth.send_raw_transaction(signed_wrap.raw_transaction)
                     self.w3.eth.wait_for_transaction_receipt(wrap_hash, timeout=120)
@@ -658,16 +689,27 @@ class MultiDEXRouter:
                         amount_in_wei
                     ).build_transaction({
                         'from': self.account.address,
-                        'gas': 100000,
                         'gasPrice': self.w3.eth.gas_price,
                         'nonce': nonce,
                         'chainId': 8453
                     })
+                    approve_tx['gas'] = self._estimate_gas(approve_tx, 100000)
                     signed_approve = self.account.sign_transaction(approve_tx)
                     approve_hash = self.w3.eth.send_raw_transaction(signed_approve.raw_transaction)
                     self.w3.eth.wait_for_transaction_receipt(approve_hash, timeout=120)
                     print(f"[dim]  Approved router to spend WETH (tx: {approve_hash.hex()[:20]}...)[/dim]")
                     nonce += 1  # Increment nonce for next tx
+                
+                # Get quote for slippage calculation
+                try:
+                    quoter_abi = [{"inputs":[{"internalType":"address","name":"tokenIn","type":"address"},{"internalType":"address","name":"tokenOut","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint160","name":"sqrtPriceLimitX96","type":"uint160"}],"name":"quoteExactInputSingle","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],"stateMutability":"view","type":"function"}]
+                    quoter = self.w3.eth.contract(address=self.w3.to_checksum_address("0x3d4e44Eb1374240CE5F1B871ab261CD16335CB76"), abi=quoter_abi)
+                    expected_out = quoter.functions.quoteExactInputSingle(self.weth, self.token_address, self.best_fee, amount_in_wei, 0).call()
+                    min_out = int(expected_out * (100 - slippage_percent) / 100)
+                    print(f"[dim]Expected: {expected_out}, Min with {slippage_percent}% slippage: {min_out}[/dim]")
+                except Exception as e:
+                    print(f"[dim]Quoter failed: {e}, using 0 min_out[/dim]")
+                    min_out = 0
                 
                 # Step 3: Swap WETH for token
                 swap_params = (
@@ -682,11 +724,14 @@ class MultiDEXRouter:
                 )
                 swap_tx = router.functions.exactInputSingle(swap_params).build_transaction({
                     'from': self.account.address,
-                    'gas': 300000,
                     'gasPrice': self.w3.eth.gas_price,
-                    'nonce': nonce,  # Use tracked nonce
+                    'nonce': nonce,
                     'chainId': 8453
                 })
+                
+                # Estimate gas
+                swap_tx['gas'] = self._estimate_gas(swap_tx, 300000)
+                print(f"[dim]Swap gas estimated: {swap_tx['gas']}[/dim]")
                 
                 signed = self.account.sign_transaction(swap_tx)
                 tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
@@ -698,15 +743,23 @@ class MultiDEXRouter:
                 if receipt['status'] == 1:
                     return True, tx_hex
                 else:
-                    return False, f"V3 ETH->Token failed (status={receipt['status']}) - TX: {tx_hex}"
+                    raise TransactionError(f"V3 ETH->Token failed (status={receipt['status']}) - TX: {tx_hex}")
 
             elif dex_config["type"] == "uniswap_v4":
                 # V4 swap - uses Universal Router with encoded commands
                 return False, "Uniswap V4 not implemented"
 
+        except TransactionError:
+            raise  # Re-raise for retry
         except Exception as e:
-            return False, f"Swap error: {e}"
+            raise TransactionError(f"Swap error: {e}")
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type(TransactionError),
+        reraise=True
+    )
     def swap_tokens_for_eth(self, amount_tokens: Decimal, slippage_percent: float = 2.0) -> Tuple[bool, str]:
         """
         Swap tokens for ETH using the best available DEX.
@@ -731,26 +784,30 @@ class MultiDEXRouter:
                 # Aerodrome/Solidly style swap
                 routes = [{"from": self.token_address, "to": self.weth, "stable": False, "factory": dex_config["factory"]}]
                 
-                # Approve router first
-                approve_tx = self.token.functions.approve(
-                    dex_config["router"],
-                    amount_in_units
-                ).build_transaction({
-                    'from': self.account.address,
-                    'gas': 100000,
-                    'gasPrice': self.w3.eth.gas_price,
-                    'nonce': self.w3.eth.get_transaction_count(self.account.address),
-                    'chainId': 8453
-                })
-                
-                signed_approve = self.account.sign_transaction(approve_tx)
-                approve_hash = self.w3.eth.send_raw_transaction(signed_approve.raw_transaction)
-                self.w3.eth.wait_for_transaction_receipt(approve_hash, timeout=120)
+                # Check existing allowance first
+                current_allowance = self.token.functions.allowance(self.account.address, dex_config["router"]).call()
+                if current_allowance < amount_in_units:
+                    print(f"[dim]Approving router to spend tokens...[/dim]")
+                    approve_tx = self.token.functions.approve(
+                        dex_config["router"],
+                        amount_in_units
+                    ).build_transaction({
+                        'from': self.account.address,
+                        'gasPrice': self.w3.eth.gas_price,
+                        'nonce': self.w3.eth.get_transaction_count(self.account.address),
+                        'chainId': 8453
+                    })
+                    approve_tx['gas'] = self._estimate_gas(approve_tx, 100000)
+                    signed_approve = self.account.sign_transaction(approve_tx)
+                    approve_hash = self.w3.eth.send_raw_transaction(signed_approve.raw_transaction)
+                    self.w3.eth.wait_for_transaction_receipt(approve_hash, timeout=120)
+                    print(f"[dim]✓ Approved[/dim]")
                 
                 # Get expected output
                 amounts_out = router.functions.getAmountsOut(amount_in_units, routes).call()
                 expected_out = amounts_out[-1]
                 min_out = int(expected_out * (100 - slippage_percent) / 100)
+                print(f"[dim]Expected: {expected_out}, Min with {slippage_percent}% slippage: {min_out}[/dim]")
                 
                 # Build swap transaction
                 deadline = int(self.w3.eth.get_block('latest')['timestamp']) + 300
@@ -762,11 +819,13 @@ class MultiDEXRouter:
                     deadline
                 ).build_transaction({
                     'from': self.account.address,
-                    'gas': 300000,
                     'gasPrice': self.w3.eth.gas_price,
                     'nonce': self.w3.eth.get_transaction_count(self.account.address),
                     'chainId': 8453
                 })
+                
+                # Estimate gas
+                tx['gas'] = self._estimate_gas(tx, 300000)
                 
                 # Sign and send
                 signed = self.account.sign_transaction(tx)
@@ -779,32 +838,36 @@ class MultiDEXRouter:
                 if receipt['status'] == 1:
                     return True, tx_hex
                 else:
-                    return False, f"Aerodrome Token->ETH failed (status={receipt['status']}) - TX: {tx_hex}"
+                    raise TransactionError(f"Aerodrome Token->ETH failed (status={receipt['status']}) - TX: {tx_hex}")
                 
             elif dex_config["type"] == "uniswap_v2":
                 # V2-style swap
                 path = [self.token_address, self.weth]
                 
-                # Approve router first
-                approve_tx = self.token.functions.approve(
-                    dex_config["router"],
-                    amount_in_units
-                ).build_transaction({
-                    'from': self.account.address,
-                    'gas': 100000,
-                    'gasPrice': self.w3.eth.gas_price,
-                    'nonce': self.w3.eth.get_transaction_count(self.account.address),
-                    'chainId': 8453
-                })
-                
-                signed_approve = self.account.sign_transaction(approve_tx)
-                approve_hash = self.w3.eth.send_raw_transaction(signed_approve.raw_transaction)
-                self.w3.eth.wait_for_transaction_receipt(approve_hash, timeout=120)
+                # Check allowance first
+                current_allowance = self.token.functions.allowance(self.account.address, dex_config["router"]).call()
+                if current_allowance < amount_in_units:
+                    print(f"[dim]Approving router to spend tokens...[/dim]")
+                    approve_tx = self.token.functions.approve(
+                        dex_config["router"],
+                        amount_in_units
+                    ).build_transaction({
+                        'from': self.account.address,
+                        'gasPrice': self.w3.eth.gas_price,
+                        'nonce': self.w3.eth.get_transaction_count(self.account.address),
+                        'chainId': 8453
+                    })
+                    approve_tx['gas'] = self._estimate_gas(approve_tx, 100000)
+                    signed_approve = self.account.sign_transaction(approve_tx)
+                    approve_hash = self.w3.eth.send_raw_transaction(signed_approve.raw_transaction)
+                    self.w3.eth.wait_for_transaction_receipt(approve_hash, timeout=120)
+                    print(f"[dim]✓ Approved[/dim]")
                 
                 # Get expected output
                 amounts_out = router.functions.getAmountsOut(amount_in_units, path).call()
                 expected_out = amounts_out[-1]
                 min_out = int(expected_out * (100 - slippage_percent) / 100)
+                print(f"[dim]Expected: {expected_out}, Min with {slippage_percent}% slippage: {min_out}[/dim]")
                 
                 # Build swap transaction
                 deadline = int(self.w3.eth.get_block('latest')['timestamp']) + 300
@@ -816,11 +879,13 @@ class MultiDEXRouter:
                     deadline
                 ).build_transaction({
                     'from': self.account.address,
-                    'gas': 300000,
                     'gasPrice': self.w3.eth.gas_price,
                     'nonce': self.w3.eth.get_transaction_count(self.account.address),
                     'chainId': 8453
                 })
+                
+                # Estimate gas
+                tx['gas'] = self._estimate_gas(tx, 300000)
                 
                 # Sign and send
                 signed = self.account.sign_transaction(tx)
@@ -833,39 +898,47 @@ class MultiDEXRouter:
                 if receipt['status'] == 1:
                     return True, tx_hex
                 else:
-                    return False, f"V2 Token->ETH failed (status={receipt['status']}) - TX: {tx_hex}"
+                    raise TransactionError(f"V2 Token->ETH failed (status={receipt['status']}) - TX: {tx_hex}")
 
             elif dex_config["type"] == "uniswap_v3":
                 # V3 token->ETH swap
-                factory = self.w3.eth.contract(
-                    address=self.w3.to_checksum_address(DEX_CONFIG["uniswap_v3"]["factory"]),
-                    abi=UNISWAP_V3_FACTORY_ABI
-                )
-                
                 # Use the fee and pool found during discovery
                 if not self.best_fee or not self.best_pool:
                     return False, "V3 fee/pool not set - discovery failed"
                 
                 print(f"[dim]Using V3 pool for sell: {self.best_pool[:20]}... with fee={self.best_fee}[/dim]")
                 
-                # Approve router
-                approve_tx = self.token.functions.approve(
-                    dex_config["router"],
-                    amount_in_units
-                ).build_transaction({
-                    'from': self.account.address,
-                    'gas': 100000,
-                    'gasPrice': self.w3.eth.gas_price,
-                    'nonce': self.w3.eth.get_transaction_count(self.account.address),
-                    'chainId': 8453
-                })
+                # Check allowance first
+                current_allowance = self.token.functions.allowance(self.account.address, dex_config["router"]).call()
+                if current_allowance < amount_in_units:
+                    print(f"[dim]Approving router to spend tokens...[/dim]")
+                    approve_tx = self.token.functions.approve(
+                        dex_config["router"],
+                        amount_in_units
+                    ).build_transaction({
+                        'from': self.account.address,
+                        'gasPrice': self.w3.eth.gas_price,
+                        'nonce': self.w3.eth.get_transaction_count(self.account.address),
+                        'chainId': 8453
+                    })
+                    approve_tx['gas'] = self._estimate_gas(approve_tx, 100000)
+                    signed_approve = self.account.sign_transaction(approve_tx)
+                    approve_hash = self.w3.eth.send_raw_transaction(signed_approve.raw_transaction)
+                    self.w3.eth.wait_for_transaction_receipt(approve_hash, timeout=120)
+                    print(f"[dim]✓ Approved[/dim]")
                 
-                signed_approve = self.account.sign_transaction(approve_tx)
-                approve_hash = self.w3.eth.send_raw_transaction(signed_approve.raw_transaction)
-                self.w3.eth.wait_for_transaction_receipt(approve_hash, timeout=120)
+                # Get quote for slippage
+                min_out = 0
+                try:
+                    quoter_abi = [{"inputs":[{"internalType":"address","name":"tokenIn","type":"address"},{"internalType":"address","name":"tokenOut","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint160","name":"sqrtPriceLimitX96","type":"uint160"}],"name":"quoteExactInputSingle","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],"stateMutability":"view","type":"function"}]
+                    quoter = self.w3.eth.contract(address=self.w3.to_checksum_address("0x3d4e44Eb1374240CE5F1B871ab261CD16335CB76"), abi=quoter_abi)
+                    expected_out = quoter.functions.quoteExactInputSingle(self.token_address, self.weth, self.best_fee, amount_in_units, 0).call()
+                    min_out = int(expected_out * (100 - slippage_percent) / 100)
+                    print(f"[dim]Expected: {expected_out}, Min with {slippage_percent}% slippage: {min_out}[/dim]")
+                except Exception as e:
+                    print(f"[dim]Quoter failed: {e}, using 0 min_out[/dim]")
                 
                 deadline = int(self.w3.eth.get_block('latest')['timestamp']) + 300
-                # web3.py v7 requires tuple for struct params
                 swap_params = (
                     self.token_address,
                     self.weth,
@@ -873,16 +946,18 @@ class MultiDEXRouter:
                     self.account.address,
                     deadline,
                     amount_in_units,
-                    0,  # amountOutMinimum
+                    min_out,
                     0   # sqrtPriceLimitX96
                 )
                 tx = router.functions.exactInputSingle(swap_params).build_transaction({
                     'from': self.account.address,
-                    'gas': 300000,
                     'gasPrice': self.w3.eth.gas_price,
                     'nonce': self.w3.eth.get_transaction_count(self.account.address),
                     'chainId': 8453
                 })
+                
+                # Estimate gas
+                tx['gas'] = self._estimate_gas(tx, 300000)
                 
                 signed = self.account.sign_transaction(tx)
                 tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
@@ -892,10 +967,12 @@ class MultiDEXRouter:
                 if receipt['status'] == 1:
                     return True, tx_hex
                 else:
-                    return False, f"V3 Token->ETH failed (status={receipt['status']}) - TX: {tx_hex}"
+                    raise TransactionError(f"V3 Token->ETH failed (status={receipt['status']}) - TX: {tx_hex}")
 
             elif dex_config["type"] == "uniswap_v4":
-                return False, "Uniswap V4 not implemented"
+                return False, "Uniswap V4 not implemented - use v4_router.py"
 
+        except TransactionError:
+            raise  # Re-raise for retry
         except Exception as e:
-            return False, f"Swap error: {e}"
+            raise TransactionError(f"Swap error: {e}")
