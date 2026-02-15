@@ -59,25 +59,22 @@ DEX_CONFIG = {
     }
 }
 
-# Aerodrome Router ABI (Solidly-style)
+# Aerodrome Router ABI (Solidly-style with Route struct)
 AERODROME_ROUTER_ABI = [
     {
         "inputs": [
-            {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
             {"internalType": "uint256", "name": "amountOutMin", "type": "uint256"},
-            {"internalType": "address[]", "name": "path", "type": "address[]"},
-            {"internalType": "address", "name": "to", "type": "address"},
-            {"internalType": "uint256", "name": "deadline", "type": "uint256"}
-        ],
-        "name": "swapExactTokensForTokens",
-        "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
-        "stateMutability": "nonpayable",
-        "type": "function"
-    },
-    {
-        "inputs": [
-            {"internalType": "uint256", "name": "amountOutMin", "type": "uint256"},
-            {"internalType": "address[]", "name": "path", "type": "address[]"},
+            {
+                "components": [
+                    {"internalType": "address", "name": "from", "type": "address"},
+                    {"internalType": "address", "name": "to", "type": "address"},
+                    {"internalType": "bool", "name": "stable", "type": "bool"},
+                    {"internalType": "address", "name": "factory", "type": "address"}
+                ],
+                "internalType": "struct IRouter.Route[]",
+                "name": "routes",
+                "type": "tuple[]"
+            },
             {"internalType": "address", "name": "to", "type": "address"},
             {"internalType": "uint256", "name": "deadline", "type": "uint256"}
         ],
@@ -90,7 +87,17 @@ AERODROME_ROUTER_ABI = [
         "inputs": [
             {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
             {"internalType": "uint256", "name": "amountOutMin", "type": "uint256"},
-            {"internalType": "address[]", "name": "path", "type": "address[]"},
+            {
+                "components": [
+                    {"internalType": "address", "name": "from", "type": "address"},
+                    {"internalType": "address", "name": "to", "type": "address"},
+                    {"internalType": "bool", "name": "stable", "type": "bool"},
+                    {"internalType": "address", "name": "factory", "type": "address"}
+                ],
+                "internalType": "struct IRouter.Route[]",
+                "name": "routes",
+                "type": "tuple[]"
+            },
             {"internalType": "address", "name": "to", "type": "address"},
             {"internalType": "uint256", "name": "deadline", "type": "uint256"}
         ],
@@ -102,8 +109,17 @@ AERODROME_ROUTER_ABI = [
     {
         "inputs": [
             {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
-            {"internalType": "address[]", "name": "path", "type": "address[]"},
-            {"internalType": "bool", "name": "stable", "type": "bool"}
+            {
+                "components": [
+                    {"internalType": "address", "name": "from", "type": "address"},
+                    {"internalType": "address", "name": "to", "type": "address"},
+                    {"internalType": "bool", "name": "stable", "type": "bool"},
+                    {"internalType": "address", "name": "factory", "type": "address"}
+                ],
+                "internalType": "struct IRouter.Route[]",
+                "name": "routes",
+                "type": "tuple[]"
+            }
         ],
         "name": "getAmountsOut",
         "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
@@ -366,8 +382,39 @@ class MultiDEXRouter:
         best_dex = None
         best_liquidity = 0
         
-        # Try Uniswap V2 first - handles ETH natively without Permit2 issues
-        if "uniswap_v2" in self.routers:
+        # Try Aerodrome first (Solidly fork - most popular on Base)
+        if "aerodrome" in self.routers:
+            try:
+                # Check if pair exists via factory
+                factory = self.w3.eth.contract(
+                    address=self.w3.to_checksum_address(DEX_CONFIG["aerodrome"]["factory"]),
+                    abi=[{"inputs":[{"internalType":"address","name":"tokenA","type":"address"},{"internalType":"address","name":"tokenB","type":"address"},{"internalType":"bool","name":"stable","type":"bool"}],"name":"getPool","outputs":[{"internalType":"address","name":"pool","type":"address"}],"stateMutability":"view","type":"function"}]
+                )
+                # Try volatile pool first (stable=false)
+                pool_address = factory.functions.getPool(self.weth, self.token_address, False).call()
+                if pool_address and pool_address != "0x0000000000000000000000000000000000000000":
+                    # Check pool has code
+                    code = self.w3.eth.get_code(pool_address)
+                    if len(code) > 0:
+                        best_dex = "aerodrome"
+                        best_liquidity = 1
+                        self.best_pool = pool_address
+                        print(f"[green]✓ Aerodrome pool found (volatile): {pool_address[:20]}...[/green]")
+                # Try stable pool if volatile not found
+                if not best_dex:
+                    pool_address = factory.functions.getPool(self.weth, self.token_address, True).call()
+                    if pool_address and pool_address != "0x0000000000000000000000000000000000000000":
+                        code = self.w3.eth.get_code(pool_address)
+                        if len(code) > 0:
+                            best_dex = "aerodrome"
+                            best_liquidity = 1
+                            self.best_pool = pool_address
+                            print(f"[green]✓ Aerodrome pool found (stable): {pool_address[:20]}...[/green]")
+            except Exception as e:
+                print(f"[dim]  Aerodrome: {e}[/dim]")
+        
+        # Try Uniswap V2 if Aerodrome not found
+        if not best_dex and "uniswap_v2" in self.routers:
             try:
                 router = self.routers["uniswap_v2"]["contract"]
                 path = [self.weth, self.token_address]
@@ -375,13 +422,12 @@ class MultiDEXRouter:
                 if amounts and amounts[-1] > 0:
                     best_dex = "uniswap_v2"
                     best_liquidity = amounts[-1]
-                    print(f"[green]✓ Uniswap V2 has liquidity (output: {amounts[-1]})[/green]")
-                    # Store best and continue to check if V3 is better
+                    print(f"[green]✓ Uniswap V2 has liquidity[/green]")
             except Exception as e:
                 print(f"[dim]  Uniswap V2: {e}[/dim]")
         
-        # Try Uniswap V3 (may have better liquidity but requires Permit2)
-        if "uniswap_v3" in self.routers:
+        # Try Uniswap V3 last (requires Permit2, problematic on Base)
+        if not best_dex and "uniswap_v3" in self.routers:
             try:
                 # Check if V3 pool exists for any fee tier
                 factory = self.w3.eth.contract(
@@ -479,7 +525,33 @@ class MultiDEXRouter:
             router = router_info["contract"]
             dex_config = router_info["config"]
             
-            if dex_config["type"] in ["solidly", "uniswap_v2"]:
+            if dex_config["type"] == "solidly":
+                # Aerodrome/Solidly style swap
+                # Uses routes with stable boolean and different function signature
+                routes = [{"from": self.weth, "to": self.token_address, "stable": False, "factory": dex_config["factory"]}]
+                
+                # Get expected output
+                amounts_out = router.functions.getAmountsOut(amount_in_wei, routes).call()
+                expected_out = amounts_out[-1]
+                min_out = int(expected_out * (100 - slippage_percent) / 100)
+                
+                # Build transaction
+                deadline = int(self.w3.eth.get_block('latest')['timestamp']) + 300
+                tx = router.functions.swapExactETHForTokens(
+                    min_out,
+                    routes,
+                    self.account.address,
+                    deadline
+                ).build_transaction({
+                    'from': self.account.address,
+                    'value': amount_in_wei,
+                    'gas': 300000,
+                    'gasPrice': self.w3.eth.gas_price,
+                    'nonce': self.w3.eth.get_transaction_count(self.account.address),
+                    'chainId': 8453
+                })
+                
+            elif dex_config["type"] == "uniswap_v2":
                 # V2-style swap
                 path = [self.weth, self.token_address]
                 
@@ -642,7 +714,61 @@ class MultiDEXRouter:
             router = router_info["contract"]
             dex_config = router_info["config"]
             
-            if dex_config["type"] in ["solidly", "uniswap_v2"]:
+            if dex_config["type"] == "solidly":
+                # Aerodrome/Solidly style swap
+                routes = [{"from": self.token_address, "to": self.weth, "stable": False, "factory": dex_config["factory"]}]
+                
+                # Approve router first
+                approve_tx = self.token.functions.approve(
+                    dex_config["router"],
+                    amount_in_units
+                ).build_transaction({
+                    'from': self.account.address,
+                    'gas': 100000,
+                    'gasPrice': self.w3.eth.gas_price,
+                    'nonce': self.w3.eth.get_transaction_count(self.account.address),
+                    'chainId': 8453
+                })
+                
+                signed_approve = self.account.sign_transaction(approve_tx)
+                approve_hash = self.w3.eth.send_raw_transaction(signed_approve.raw_transaction)
+                self.w3.eth.wait_for_transaction_receipt(approve_hash, timeout=120)
+                
+                # Get expected output
+                amounts_out = router.functions.getAmountsOut(amount_in_units, routes).call()
+                expected_out = amounts_out[-1]
+                min_out = int(expected_out * (100 - slippage_percent) / 100)
+                
+                # Build swap transaction
+                deadline = int(self.w3.eth.get_block('latest')['timestamp']) + 300
+                tx = router.functions.swapExactTokensForETH(
+                    amount_in_units,
+                    min_out,
+                    routes,
+                    self.account.address,
+                    deadline
+                ).build_transaction({
+                    'from': self.account.address,
+                    'gas': 300000,
+                    'gasPrice': self.w3.eth.gas_price,
+                    'nonce': self.w3.eth.get_transaction_count(self.account.address),
+                    'chainId': 8453
+                })
+                
+                # Sign and send
+                signed = self.account.sign_transaction(tx)
+                tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
+
+                # Wait for receipt
+                receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+                tx_hex = self.w3.to_hex(tx_hash)
+
+                if receipt['status'] == 1:
+                    return True, tx_hex
+                else:
+                    return False, f"Aerodrome Token->ETH failed (status={receipt['status']}) - TX: {tx_hex}"
+                
+            elif dex_config["type"] == "uniswap_v2":
                 # V2-style swap
                 path = [self.token_address, self.weth]
                 
