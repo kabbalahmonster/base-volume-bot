@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-0x Aggregator Integration v2
-============================
-Uses 0x API v2 Permit2 for best swap routing on Base.
+0x Aggregator Integration - Allowance Holder API
+================================================
+Uses 0x API v2 Allowance Holder for swaps on Base.
+This is simpler than Permit2 - uses traditional token approvals.
 
-API Docs: https://0x.org/docs/0x-swap-api/guides/swap-tokens-with-0x-swap-api-permit2
+API Docs: https://0x.org/docs/0x-swap-api/guides/swap-tokens-with-0x-swap-api
 """
 
 import requests
@@ -19,6 +20,12 @@ ZEROX_CHAIN_ID = 8453
 # WETH on Base
 WETH_BASE = "0x4200000000000000000000000000000000000006"
 
+# ETH placeholder for 0x API
+ETH_PLACEHOLDER = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"
+
+# 0x Allowance Holder address on Base
+ALLOWANCE_HOLDER = "0x000000000022d473030f116ddee9f6b43ac78ba3"
+
 ERC20_ABI = [
     {"constant": True, "inputs": [], "name": "decimals", "outputs": [{"name": "", "type": "uint8"}], "type": "function"},
     {"constant": True, "inputs": [{"name": "_owner", "type": "address"}, {"name": "_spender", "type": "address"}], "name": "allowance", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
@@ -27,7 +34,7 @@ ERC20_ABI = [
 
 
 class ZeroXAggregator:
-    """0x aggregator v2 for best swap routing on Base."""
+    """0x aggregator v2 Allowance Holder for Base."""
     
     def __init__(self, w3: Web3, account: Account, api_key: Optional[str] = None):
         self.w3 = w3
@@ -43,23 +50,23 @@ class ZeroXAggregator:
         if api_key:
             self.headers["0x-api-key"] = api_key
     
-    def _get_permit2_quote(self, sell_token: str, buy_token: str, sell_amount: int,
-                           slippage: float = 1.0) -> Optional[Dict]:
-        """Get swap quote from 0x v2 Permit2 API."""
+    def _get_allowance_holder_quote(self, sell_token: str, buy_token: str, sell_amount: int,
+                                     slippage: float = 1.0) -> Optional[Dict]:
+        """Get swap quote from 0x v2 Allowance Holder API."""
         try:
             params = {
                 "chainId": self.chain_id,
                 "sellToken": sell_token,
                 "buyToken": buy_token,
                 "sellAmount": str(sell_amount),
-                "slippageBps": str(int(slippage * 100)),  # v2 uses basis points
-                "taker": self.account.address,  # v2 uses 'taker' not 'takerAddress'
+                "slippageBps": str(int(slippage * 100)),  # basis points
+                "taker": self.account.address,
             }
             
-            print(f"[dim]Calling 0x v2 Permit2 API...[/dim]")
+            print(f"[dim]Calling 0x v2 Allowance Holder API...[/dim]")
             
             response = requests.get(
-                f"{ZEROX_API_BASE}/swap/permit2/quote",
+                f"{ZEROX_API_BASE}/swap/allowance-holder/quote",
                 params=params,
                 headers=self.headers,
                 timeout=30
@@ -68,7 +75,7 @@ class ZeroXAggregator:
             if response.status_code == 200:
                 return response.json()
             else:
-                error_text = response.text[:300] if response.text else "Unknown error"
+                error_text = response.text[:500] if response.text else "Unknown error"
                 print(f"[yellow]0x API error: {response.status_code} - {error_text}[/yellow]")
                 return None
                 
@@ -78,44 +85,37 @@ class ZeroXAggregator:
     
     def swap_eth_for_tokens(self, token_address: str, amount_eth: Decimal,
                            slippage_percent: float = 1.0) -> Tuple[bool, str]:
-        """Swap ETH for tokens via 0x v2 Permit2.
+        """Swap ETH for tokens via 0x v2 Allowance Holder.
         
-        Note: 0x v2 uses WETH for ETH swaps (not ETH placeholder).
-        We need to wrap ETH first, then use Permit2 for the swap.
+        For ETH -> Token, we just send ETH with the transaction.
+        No approvals needed for the sell side (ETH is native).
         """
         try:
             amount_wei = int(amount_eth * 10**18)
             
-            print(f"[dim]Getting 0x v2 quote for {amount_eth} WETH -> Token...[/dim]")
+            print(f"[dim]Getting 0x Allowance Holder quote for {amount_eth} ETH -> Token...[/dim]")
             
-            # v2 uses actual WETH address, not ETH placeholder
-            quote = self._get_permit2_quote(
-                WETH_BASE,  # Use WETH, not ETH placeholder
+            # Use ETH placeholder for native ETH
+            quote = self._get_allowance_holder_quote(
+                ETH_PLACEHOLDER,  # Native ETH
                 token_address,
                 amount_wei,
                 slippage_percent
             )
             
             if not quote:
-                # Try with ETH placeholder as fallback
-                print(f"[dim]Retrying with ETH placeholder...[/dim]")
-                quote = self._get_permit2_quote(
-                    "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
-                    token_address,
-                    amount_wei,
-                    slippage_percent
-                )
-                if not quote:
-                    return False, "Failed to get quote from 0x API"
+                return False, "Failed to get quote from 0x API"
             
             print(f"[green]✓ 0x route found![/green]")
             print(f"[dim]  Expected output: {quote.get('buyAmount', 'N/A')}[/dim]")
             print(f"[dim]  Liquidity available: {quote.get('liquidityAvailable', False)}[/dim]")
             
-            # Check if there are any issues
+            # Check for issues
             issues = quote.get('issues', {})
             if issues:
-                print(f"[yellow]  Issues: {issues}[/yellow]")
+                allowance_issue = issues.get('allowance')
+                if allowance_issue:
+                    print(f"[dim]  Allowance required from: {allowance_issue.get('spender', 'N/A')}[/dim]")
             
             # Get transaction data
             transaction = quote.get('transaction', {})
@@ -126,14 +126,14 @@ class ZeroXAggregator:
             tx = {
                 'to': self.w3.to_checksum_address(transaction["to"]),
                 'data': transaction["data"],
-                'value': int(transaction.get("value", 0)),
-                'gas': int(transaction.get("gas", 150000)),
+                'value': int(transaction.get("value", amount_wei)),  # ETH value to send
+                'gas': int(transaction.get("gas", 200000)),
                 'gasPrice': int(transaction.get("gasPrice", self.w3.eth.gas_price)),
                 'nonce': self.w3.eth.get_transaction_count(self.account.address),
                 'chainId': self.chain_id,
             }
             
-            print(f"[dim]Executing 0x swap...[/dim]")
+            print(f"[dim]Executing 0x swap (sending {amount_eth} ETH)...[/dim]")
             
             signed = self.account.sign_transaction(tx)
             tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
@@ -157,30 +157,54 @@ class ZeroXAggregator:
     
     def swap_tokens_for_eth(self, token_address: str, amount_tokens: Decimal,
                            token_decimals: int = 18, slippage_percent: float = 1.0) -> Tuple[bool, str]:
-        """Swap tokens for ETH via 0x v2 Permit2."""
+        """Swap tokens for ETH via 0x v2 Allowance Holder.
+        
+        For Token -> ETH, we need to approve the Allowance Holder.
+        """
         try:
             amount_units = int(amount_tokens * (10 ** token_decimals))
             
-            print(f"[dim]Getting 0x v2 quote for Token -> WETH...[/dim]")
+            print(f"[dim]Getting 0x Allowance Holder quote for Token -> ETH...[/dim]")
             
-            quote = self._get_permit2_quote(
+            # Check and approve allowance if needed
+            token_contract = self.w3.eth.contract(
+                address=self.w3.to_checksum_address(token_address),
+                abi=ERC20_ABI
+            )
+            
+            current_allowance = token_contract.functions.allowance(
+                self.account.address,
+                ALLOWANCE_HOLDER
+            ).call()
+            
+            if current_allowance < amount_units:
+                print(f"[dim]Approving 0x Allowance Holder to spend tokens...[/dim]")
+                approve_tx = token_contract.functions.approve(
+                    ALLOWANCE_HOLDER,
+                    amount_units
+                ).build_transaction({
+                    'from': self.account.address,
+                    'gas': 100000,
+                    'gasPrice': self.w3.eth.gas_price,
+                    'nonce': self.w3.eth.get_transaction_count(self.account.address),
+                    'chainId': self.chain_id,
+                })
+                
+                signed_approve = self.account.sign_transaction(approve_tx)
+                approve_hash = self.w3.eth.send_raw_transaction(signed_approve.raw_transaction)
+                self.w3.eth.wait_for_transaction_receipt(approve_hash, timeout=120)
+                print(f"[dim]Approved 0x Allowance Holder[/dim]")
+            
+            # Get quote
+            quote = self._get_allowance_holder_quote(
                 token_address,
-                WETH_BASE,  # Get WETH, user can unwrap if needed
+                ETH_PLACEHOLDER,  # Native ETH
                 amount_units,
                 slippage_percent
             )
             
             if not quote:
-                # Try for ETH placeholder
-                print(f"[dim]Retrying with ETH placeholder...[/dim]")
-                quote = self._get_permit2_quote(
-                    token_address,
-                    "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
-                    amount_units,
-                    slippage_percent
-                )
-                if not quote:
-                    return False, "Failed to get quote from 0x API"
+                return False, "Failed to get quote from 0x API"
             
             print(f"[green]✓ 0x route found![/green]")
             
@@ -193,7 +217,7 @@ class ZeroXAggregator:
                 'to': self.w3.to_checksum_address(transaction["to"]),
                 'data': transaction["data"],
                 'value': int(transaction.get("value", 0)),
-                'gas': int(transaction.get("gas", 150000)),
+                'gas': int(transaction.get("gas", 200000)),
                 'gasPrice': int(transaction.get("gasPrice", self.w3.eth.gas_price)),
                 'nonce': self.w3.eth.get_transaction_count(self.account.address),
                 'chainId': self.chain_id,
