@@ -156,6 +156,9 @@ class V4DirectRouter:
                     # take(currency, recipient, amount) - specify exact recipient
                     v4_swap.take(currency=token_address, recipient=self.account.address, amount=min_amount_out)
                     
+                    # CRITICAL: Build v4 swap to commit commands to chain
+                    chain = v4_swap.build_v4_swap()
+                    
                     print(f"[green]✓ Found V4 pool: fee={fee}[/green]")
                     
                     # Build transaction with Base UR address (checksummed)
@@ -258,6 +261,9 @@ class V4DirectRouter:
                     )
                     # Take WETH output to wallet
                     v4_swap.take(currency=self.weth, recipient=self.account.address, amount=min_amount_out)
+                    
+                    # CRITICAL: Build v4 swap to commit commands to chain
+                    chain = v4_swap.build_v4_swap()
                     
                     deadline = int(time.time()) + deadline_seconds
                     base_ur = self.w3.to_checksum_address(UNIVERSAL_ROUTER)

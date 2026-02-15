@@ -366,6 +366,9 @@ class VolumeBot:
                         # take(currency, recipient, amount) - specify exact recipient
                         v4_swap.take(currency=compute, recipient=self.account.address, amount=1)
                         
+                        # CRITICAL: Build v4 swap to commit commands to chain
+                        chain = v4_swap.build_v4_swap()
+                        
                         # Build transaction with Base UR address (checksummed)
                         base_ur = self.w3.to_checksum_address("0x6c083a36f731ea994739ef5e8647d18553d41f76")
                         tx = chain.build_transaction(
