@@ -304,19 +304,29 @@ class VolumeBot:
                 console.print(f"[red]✗ Insufficient ETH balance[/red]")
                 return False
             
-            # Execute swap using 1inch (primary) with fallback to multi-DEX router
-            console.print(f"[dim]Swapping {amount_eth} ETH for ${self.token_symbol} via 1inch...[/dim]")
-
-            success, result = self.oneinch.swap_eth_for_tokens(
-                self.token_address,
-                amount_eth,
-                slippage_percent=self.config.slippage_percent
-            )
-
-            if not success:
-                console.print(f"[yellow]⚠ 1inch failed: {result}[/yellow]")
-                console.print(f"[dim]Falling back to multi-DEX router...[/dim]")
-
+            # Try 1inch first if API key is configured, otherwise use multi-DEX router directly
+            use_oneinch = hasattr(self.config, 'oneinch_api_key') and self.config.oneinch_api_key
+            
+            if use_oneinch:
+                console.print(f"[dim]Swapping {amount_eth} ETH for ${self.token_symbol} via 1inch...[/dim]")
+                success, result = self.oneinch.swap_eth_for_tokens(
+                    self.token_address,
+                    amount_eth,
+                    slippage_percent=self.config.slippage_percent
+                )
+                if not success:
+                    console.print(f"[yellow]⚠ 1inch failed: {result}[/yellow]")
+                    console.print(f"[dim]Falling back to multi-DEX router...[/dim]")
+                else:
+                    console.print(f"[green]✓ Buy successful via 1inch![/green]")
+                    console.print(f"[dim]  TX: {result[:20]}...[/dim]")
+                    self.successful_buys += 1
+                    self.total_bought_eth += amount_eth
+                    return True
+            
+            # Use multi-DEX router (direct swap)
+            if not use_oneinch or not success:
+                console.print(f"[dim]Swapping {amount_eth} ETH for ${self.token_symbol} via multi-DEX router...[/dim]")
                 success, result = self.dex_router.swap_eth_for_tokens(
                     amount_eth,
                     slippage_percent=self.config.slippage_percent

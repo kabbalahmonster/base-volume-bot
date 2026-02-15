@@ -65,6 +65,9 @@ class Config:
     # Pool settings (Uniswap V3)
     pool_fee: int = 3000  # 0.3% fee tier
     
+    # 1inch API (optional - if not set, uses direct DEX routing)
+    oneinch_api_key: Optional[str] = None
+    
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary (excluding sensitive data)."""
         return asdict(self)
