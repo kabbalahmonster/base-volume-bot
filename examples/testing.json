@@ -1,0 +1,19 @@
+{
+  "_comment": "Testing Configuration - Dry-run mode for development and testing.",
+  "chain": "base",
+  "buy_amount_eth": 0.001,
+  "buy_interval_minutes": 1,
+  "sell_after_buys": 3,
+  "slippage_percent": 5.0,
+  "max_gas_gwei": 10.0,
+  "min_eth_balance": 0.001,
+  "reserve_eth": 0.0005,
+  "dex_router": "uniswap_v3",
+  "dry_run": true,
+  "log_level": "DEBUG",
+  "max_retries": 1,
+  "retry_delay_seconds": 1,
+  "gas_price_strategy": "dynamic",
+  "max_daily_trades": 10000,
+  "health_check_interval": 10
+}

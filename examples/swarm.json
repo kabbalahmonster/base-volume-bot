@@ -1,0 +1,28 @@
+{
+  "_comment": "Swarm Configuration - Multi-wallet coordinated trading.",
+  "chain": "base",
+  "buy_amount_eth": 0.001,
+  "buy_interval_minutes": 3,
+  "sell_after_buys": 8,
+  "slippage_percent": 2.0,
+  "max_gas_gwei": 0.5,
+  "min_eth_balance": 0.01,
+  "reserve_eth": 0.005,
+  "dex_router": "auto",
+  "router_priority": ["uniswap_v3", "1inch"],
+  "swarm_mode": true,
+  "swarm": {
+    "num_wallets": 10,
+    "rotation_mode": "random",
+    "fund_amount_per_wallet": 0.02,
+    "reclaim_threshold": 0.001,
+    "coordination_interval": 60
+  },
+  "dry_run": false,
+  "log_level": "INFO",
+  "max_retries": 3,
+  "retry_delay_seconds": 5,
+  "gas_price_strategy": "dynamic",
+  "max_daily_trades": 1000,
+  "health_check_interval": 60
+}
