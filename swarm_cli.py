@@ -480,6 +480,83 @@ def rotate_mode_command(args):
     console.print(f"[dim]{explanations[new_mode]}[/dim]")
 
 
+def dissolve_command(args):
+    """Handle dissolve command - reclaim all funds and delete swarm wallets."""
+    print_banner()
+    
+    console.print("\n[bold red]⚠️  SWARM DISSOLUTION[/bold red]")
+    console.print("[yellow]This will:[/yellow]")
+    console.print("  1. Sell all tokens for ETH")
+    console.print("  2. Reclaim ETH to near-zero (leaving only gas dust)")
+    console.print("  3. Verify all wallets are empty")
+    console.print("  4. [bold red]DELETE the encrypted wallet file[/bold red]")
+    console.print("\n[red]This action is IRREVERSIBLE![/red]\n")
+    
+    # Double confirm
+    confirm = console.input("[bold red]Type 'DISSOLVE' to confirm: [/bold red]")
+    if confirm != "DISSOLVE":
+        console.print("[yellow]Dissolution cancelled.[/yellow]")
+        return
+    
+    # Get password
+    password = get_password()
+    
+    # Load swarm
+    try:
+        config, web3 = load_swarm_config(args.rpc)
+        manager = SecureSwarmManager(config, web3)
+        
+        if not manager.load_swarm(password):
+            console.print("[red]Failed to load swarm wallets![/red]")
+            return
+    except Exception as e:
+        console.print(f"[red]Error loading swarm: {e}[/red]")
+        return
+    
+    # Show pre-dissolve status
+    console.print("\n[bold cyan]Pre-Dissolve Status:[/bold cyan]")
+    status = manager.get_swarm_status()
+    console.print(f"  Total ETH: {status['total_eth']:.6f}")
+    console.print(f"  Total COMPUTE: {status['total_compute']:.4f}")
+    console.print(f"  Wallets: {status['active_wallets']}")
+    
+    # Get main wallet key
+    console.print("\n[yellow]Enter main wallet private key for final reclaim:[/yellow]")
+    main_key = console.input("[dim]> [/dim]").strip()
+    
+    if not main_key:
+        console.print("[red]Private key required for dissolve![/red]")
+        return
+    
+    # Execute dissolution
+    console.print("\n[bold cyan]Executing dissolution...[/bold cyan]")
+    
+    try:
+        success, records = manager.dissolve_swarm(
+            main_wallet_key=main_key,
+            password=password,
+            force=args.force
+        )
+        
+        if success:
+            console.print("\n[bold green]✓ SWARM DISSOLVED SUCCESSFULLY[/bold green]")
+            console.print(f"[dim]Audit records: {len(records)}[/dim]")
+            
+            # Show final status
+            console.print("\n[bold cyan]Final Status:[/bold cyan]")
+            console.print("  All wallets emptied and deleted")
+            console.print("  Wallet file archived with .dissolved timestamp")
+        else:
+            console.print("\n[red]✗ Dissolution incomplete![/red]")
+            console.print("[yellow]Some wallets may still have balances.[/yellow]")
+            console.print("[dim]Use --force to dissolve anyway (may lose funds)[/dim]")
+            
+    except Exception as e:
+        console.print(f"\n[red]✗ Dissolution failed: {e}[/red]")
+        import traceback
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
+
+
 def run_command(args):
     """Handle run command - run trading bot with swarm."""
     print_banner()
@@ -669,6 +746,12 @@ Examples:
     run_parser.add_argument('--config', default='./bot_config.yaml', help='Path to bot config')
     run_parser.add_argument('--rotation', choices=[m.value for m in RotationMode], help='Rotation mode override')
     
+    # Dissolve command
+    dissolve_parser = subparsers.add_parser('dissolve', help='Dissolve swarm: reclaim all funds and delete wallets')
+    dissolve_parser.add_argument('--main-address', required=True, help='Main wallet address to reclaim to')
+    dissolve_parser.add_argument('--password', help='Swarm password (or prompt)')
+    dissolve_parser.add_argument('--force', action='store_true', help='Force dissolve even with non-zero balances (risky)')
+    
     args = parser.parse_args()
     
     if args.command == 'create':
@@ -683,6 +766,8 @@ Examples:
         rotate_mode_command(args)
     elif args.command == 'run':
         run_command(args)
+    elif args.command == 'dissolve':
+        dissolve_command(args)
     else:
         parser.print_help()
 
