@@ -142,9 +142,10 @@ class V4DirectRouter:
                     # Pattern: wrap ETH -> V4 swap exact in -> take tokens
                     chain = self.codec.encode.chain()
                     
-                    # 1. Wrap ETH to WETH (command 0x0a) - recipient ROUTER so it holds WETH
-                    chain.wrap_eth(self.FunctionRecipient.ROUTER, amount_in_wei)
-                    print(f"[dim]  Added WRAP_ETH command (recipient=ROUTER)[/dim]")
+                    # 1. Wrap ETH to WETH (command 0x0a) - recipient SENDER (router credits to sender)
+                    # Library docs use FunctionRecipient.SENDER for wrap_eth
+                    chain.wrap_eth(self.FunctionRecipient.SENDER, amount_in_wei)
+                    print(f"[dim]  Added WRAP_ETH command (recipient=SENDER)[/dim]")
                     
                     # 2. Add V4 swap (command 0x10)
                     # V4 requires: SETTLE -> SWAP -> TAKE
@@ -178,6 +179,9 @@ class V4DirectRouter:
                     
                     # CRITICAL: Build v4 swap to commit commands to chain
                     chain = v4_swap.build_v4_swap()
+                    
+                    # DEBUG: Print actual commands being sent
+                    print(f"[dim]  DEBUG: chain.commands = {chain.commands.hex() if hasattr(chain, 'commands') else 'N/A'}[/dim]")
                     
                     print(f"[green]✓ Found V4 pool: fee={fee}[/green]")
                     

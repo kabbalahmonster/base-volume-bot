@@ -1143,9 +1143,10 @@ def simulate_command(token_address: str = COMPUTE_TOKEN, amount: float = 0.0005,
         codec = RouterCodec(w3=w3)
         chain = codec.encode.chain()
         
-        # 1. Wrap ETH to WETH (command 0x0a) - recipient ROUTER so it holds WETH
-        chain.wrap_eth(FunctionRecipient.ROUTER, amount_in_wei)
-        console.print("[dim]  Added WRAP_ETH command (recipient=ROUTER)[/dim]")
+        # 1. Wrap ETH to WETH (command 0x0a) - recipient SENDER (router credits to sender)
+        # Library docs use FunctionRecipient.SENDER for wrap_eth
+        chain.wrap_eth(FunctionRecipient.SENDER, amount_in_wei)
+        console.print("[dim]  Added WRAP_ETH command (recipient=SENDER)[/dim]")
         
         # 2. V4 swap with SETTLE -> SWAP -> TAKE pattern
         v4_swap = chain.v4_swap()
