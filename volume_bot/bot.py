@@ -560,14 +560,16 @@ class VolumeBot:
     
     def run(self):
         """Main bot loop"""
+        # Connect first to get token symbol
+        if not self.connect():
+            return
+        
+        # Now print banner with correct symbol
         console.print(Panel.fit(
             f"[bold cyan]${self.token_symbol} Volume Bot[/bold cyan]\n"
             "[dim]Cult of the Shell | Base Network[/dim]",
             box=box.DOUBLE
         ))
-        
-        if not self.connect():
-            return
         
         # Show config
         console.print(f"\n[dim]Configuration:[/dim]")
