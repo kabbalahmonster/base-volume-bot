@@ -10,12 +10,23 @@ A production-ready, secure Python trading bot for generating volume on $COMPUTE 
 
 - **🔐 Secure**: Private key encryption with PBKDF2-HMAC-SHA256 (600k iterations)
 - **⛽ Gas Optimized**: Dynamic gas pricing with configurable limits
-- **🔄 Retry Logic**: Exponential backoff for failed transactions
+- **🔄 Multi-DEX**: Uniswap V3 (✅ working), 0x (ready), V4 (⚠️ experimental)
 - **📊 Rich CLI**: Beautiful terminal UI with progress bars and tables
 - **🧪 Dry Run Mode**: Test without spending real funds
 - **💰 Withdraw**: Built-in withdrawal to external wallets
 - **🛡️ Slippage Protection**: Configurable slippage tolerance
 - **📝 Comprehensive Logging**: File and console logging
+
+## ⚠️ DEX Router Status
+
+| Router | Status | Notes |
+|--------|--------|-------|
+| **Uniswap V3** | ✅ Production Ready | Tested with BNKR via Aerodrome |
+| **0x Aggregator** | ✅ Ready | API integration complete |
+| **Uniswap V4** | ⚠️ Experimental | Complex encoding issues, see `feature/v4-universal-router` |
+
+### V4 Status
+The V4 Universal Router integration is currently **non-functional** despite correct-looking encoding. Transactions succeed but no tokens are delivered. Use V3 for production.
 
 ## 🚀 Quick Start
 
