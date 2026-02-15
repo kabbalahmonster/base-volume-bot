@@ -24,7 +24,7 @@ from eth_account import Account
 DEX_CONFIG = {
     "uniswap_v4": {
         "name": "Uniswap V4",
-        "router": "0x6c083A36F731eA994739eF5E8647D18553D41f76",  # Universal Router on Base
+        "router": "0x6c083a36f731ea994739ef5e8647d18553d41f76",  # Universal Router on Base
         "factory": "0x1F98431c8aD98523631AE4a59f267346ea31F984",  # Pool manager
         "type": "uniswap_v4",
         "fee_tiers": [100, 500, 3000, 10000],
@@ -65,7 +65,7 @@ AERODROME_ROUTER_ABI = [
         "inputs": [
             {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
             {"internalType": "uint256", "name": "amountOutMin", "type": "uint256"},
-            {"internalType": "address[]", "name": "path", "type": "address[]},
+            {"internalType": "address[]", "name": "path", "type": "address[]"},
             {"internalType": "address", "name": "to", "type": "address"},
             {"internalType": "uint256", "name": "deadline", "type": "uint256"}
         ],
