@@ -1,16 +1,45 @@
 # Volume Bot - Testing Instructions for Tester Agent
 
-## Current Status (2026-02-15)
+## Current Status (2026-02-15 14:30 UTC)
 
 ### ✅ WORKING: BNKR via Aerodrome
 - **Branch:** `feature/multidex-fixes`
 - **Status:** Tested live, fully functional
 - **TX Example:** 0x1aa0b3a5e4475abfe0... (1,572 BNKR acquired)
 
-### 🔄 READY TO TEST: COMPUTE via V4 (NEW LIBRARY)
+### 🔄 IN PROGRESS: COMPUTE via V4 (Library Integration)
 - **Branch:** `feature/v4-universal-router`
-- **Latest Commit:** `372b7df`
-- **Status:** Rewritten with official encoder library
+- **Latest Commit:** `899291a`
+- **Status:** Library API fixed, needs testing
+
+---
+
+## IMPORTANT: Library API Discovery
+
+**The library API is different than initially assumed.**
+
+### Correct API:
+```python
+from uniswap_universal_router_decoder import RouterCodec
+
+codec = RouterCodec()
+chain = codec.encode.chain()  # Get chain builder
+
+# Add swap to chain
+chain.v4_swap_exact_in_single(...)
+
+# Build transaction
+tx = codec.build_transaction(chain=chain, ...)
+```
+
+### What Was Wrong:
+- ❌ `codec.add_wrap_eth()` - Method doesn't exist
+- ❌ `codec.add_v4_swap_exact_in_single()` - Method doesn't exist
+
+### What's Fixed:
+- ✅ `codec.encode.chain()` - Get chain builder
+- ✅ `chain.v4_swap_exact_in_single()` - Add swap to chain
+- ✅ `codec.build_transaction()` - Build final TX
 
 ---
 
@@ -20,77 +49,97 @@
 
 ```bash
 cd /home/fuzzbox/.openclaw/workspace/base-volume-bot
-git fetch origin
 git checkout feature/v4-universal-router
-git pull origin feature/v4-universal-router  # Should be at 372b7df
+git pull origin feature/v4-universal-router  # Should be at 899291a
 
-# Install NEW dependency
-pip install uniswap-universal-router-decoder
-
-# Verify installation
-python -c "from uniswap_universal_router_decoder import RouterCodec; print('✓ Library installed')"
+# Verify library installed
+pip show uniswap-universal-router-decoder  # Should be v2.0.0+
 ```
 
-### 2. Test COMPUTE (Small Amount First)
+### 2. Test Dry-Run First (NEW)
 
 ```bash
-# Test with 0.0005 ETH (minimum to verify functionality)
+python bot.py run --dry-run --token-address 0x696381f39F17cAD67032f5f52A4924ce84e51BA3
+```
+
+**Expected output:**
+```
+[yellow][DRY RUN] Testing V4 swap encoding...[/yellow]
+[yellow]⚠ [DRY RUN] No V2/V3 pools found, testing V4 Universal Router...[/yellow]
+[dim][DRY RUN] Testing V4 transaction encoding...[/dim]
+[green]✓ [DRY RUN] V4 library loaded and ready[/green]
+[green]✓ [DRY RUN] Routing validation complete[/green]
+```
+
+### 3. Test Live (If Dry-Run Passes)
+
+**⚠️ WARNING: Only ~0.0015 ETH remaining**
+
+```bash
 python bot.py run --token-address 0x696381f39F17cAD67032f5f52A4924ce84e51BA3
 ```
 
-### 3. Expected Output
-
-**If working correctly:**
+**Expected if working:**
 ```
-[green]✓ uniswap-universal-router-decoder library loaded[/green]
-...
 [dim]Building V4 swap with library...[/dim]
-[dim]  Trying fee=500, tickSpacing=10...[/dim]
+[dim]  Trying fee=500...[/dim]
 [green]✓ Found V4 pool: fee=500[/green]
 [dim]Transaction built, sending...[/dim]
-[dim]TX: 0x...[/dim]
-[green]✓ V4 swap successful! Gas used: ...[/green]
+[green]✓ V4 swap successful![/green]
 ```
 
 **Then verify:**
 ```bash
-# Check COMPUTE balance
 python bot.py balance
 # Should show: COMPUTE Balance: > 0
 ```
 
-### 4. What to Report
+---
 
-If successful:
-- [ ] TX hash
-- [ ] Gas used
-- [ ] COMPUTE balance after swap
-- [ ] Any warnings/errors
+## If It Still Fails
 
-If failed:
-- [ ] Error message
-- [ ] TX hash (if any)
-- [ ] Logs from console
+### Check Library API:
+```python
+python -c "
+from uniswap_universal_router_decoder import RouterCodec
+codec = RouterCodec()
+print('Methods:', [m for m in dir(codec) if not m.startswith('_')])
+print('Encode methods:', [m for m in dir(codec.encode) if not m.startswith('_')])
+"
+```
+
+### Expected Methods:
+- `codec.encode.chain()` - Returns chain builder
+- `chain.v4_swap_exact_in_single()` - Add swap
+- `codec.build_transaction()` - Build TX
 
 ---
 
-## Architecture Changes
+## What to Report
 
-### New Library Integration
-- **Library:** `uniswap-universal-router-decoder` (v2.0.0+)
-- **Purpose:** Properly encode V4 Universal Router commands
-- **Key Features:**
-  - `add_wrap_eth()` - ETH → WETH wrapping
-  - `add_v4_swap_exact_in_single()` - V4 swap encoding
-  - `add_settle()` - Settle output tokens
-  - `add_take()` - Take tokens to wallet
-  - `add_sweep()` - Clean up remainders
+### If successful:
+- [ ] TX hash
+- [ ] Gas used
+- [ ] COMPUTE balance after swap
+- [ ] Dry-run output
 
-### Why Previous Attempts Failed
-1. **Manual encoding** of V4 commands was incorrect
-2. **Wrong parameter structure** for V4_SWAP
-3. **Missing proper settlement** flow
-4. **Library now handles** all complex ABI encoding
+### If failed:
+- [ ] Error message (full traceback)
+- [ ] Output of library API check above
+- [ ] Python version: `python --version`
+- [ ] Library version: `pip show uniswap-universal-router-decoder`
+
+---
+
+## Alternative If V4 Keeps Failing
+
+**Recommend focusing on BNKR:**
+```bash
+git checkout feature/multidex-fixes
+python bot.py run --token-address 0x22aF33FE49fD1Fa80c7149773dDe5890D3c76F3b
+```
+
+BNKR is proven working via Aerodrome.
 
 ---
 
@@ -98,34 +147,19 @@ If failed:
 
 | Branch | Status | Action |
 |--------|--------|--------|
-| `feature/multidex-fixes` | ✅ Ready | BNKR working, can merge to main |
-| `feature/v4-universal-router` | 🔄 Testing | COMPUTE with new library |
+| `feature/multidex-fixes` | ✅ Ready | BNKR working, can merge |
+| `feature/v4-universal-router` | 🔄 Testing | Library API fixed |
 | `feature/security-hardening` | ✅ Ready | Security audit complete |
 | `feature/docs-improvements` | ✅ Ready | Documentation complete |
-| `feature/test-suite` | ✅ Ready | Test suite ready |
-
----
-
-## Post-Test Actions
-
-### If COMPUTE Works:
-1. Test a few more swaps to verify reliability
-2. Merge `feature/v4-universal-router` to main
-3. Update README with COMPUTE support
-4. Deploy production bot
-
-### If COMPUTE Still Fails:
-1. Document V4 as "experimental"
-2. Merge working BNKR branch (`feature/multidex-fixes`)
-3. Focus on BNKR volume generation
-4. Wait for 0x aggregator V4 support
 
 ---
 
 ## Current ETH Balance
-- **Before testing:** Check wallet
-- **Recommended test amount:** 0.0005 ETH per swap
-- **Stop if:** Balance drops below 0.001 ETH
+
+- **Approximate:** ~0.0015 ETH
+- **Test amount:** 0.0005 ETH per swap
+- **Minimum to preserve:** 0.001 ETH
+- **Action if low:** Switch to BNKR testing
 
 ---
 
@@ -134,24 +168,14 @@ If failed:
 ### COMPUTE Token
 - **Address:** `0x696381f39F17cAD67032f5f52A4924ce84e51BA3`
 - **Network:** Base
-- **Type:** V4-only (no V2/V3 pools)
+- **Type:** V4-only
 
-### BNKR Token (Working)
+### BNKR Token (Proven Working)
 - **Address:** `0x22aF33FE49fD1Fa80c7149773dDe5890D3c76F3b`
 - **Router:** Aerodrome
 - **Status:** ✅ Fully functional
 
 ---
 
-## Support
-
-If issues arise:
-1. Check library installed: `pip show uniswap-universal-router-decoder`
-2. Verify branch: `git log --oneline -1` (should show 372b7df)
-3. Check Python version: `python --version` (3.9+ required)
-4. Report full error output
-
----
-
-*Last updated: 2026-02-15 14:18 UTC*
-*New V4 library integration ready for testing*
+*Last updated: 2026-02-15 14:30 UTC*
+*Library API fixed, ready for testing*
