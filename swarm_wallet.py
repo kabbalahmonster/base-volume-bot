@@ -52,6 +52,7 @@ class SwarmWalletConfig:
     num_wallets: int = 10                    # Number of swarm wallets to create
     min_eth_per_wallet: float = 0.01        # Minimum ETH to keep in each wallet (gas reserve)
     eth_fund_amount: float = 0.02           # ETH to fund each wallet initially
+    funder_gas_reserve: float = 0.005       # ETH to reserve on funder wallet for gas (was 0.01)
     
     # Rotation settings
     rotation_mode: RotationMode = RotationMode.ROUND_ROBIN
@@ -537,7 +538,7 @@ class SecureSwarmManager:
         # Check main wallet balance
         main_balance = self.web3.eth.get_balance(main_address)
         total_needed = self.web3.to_wei(eth_per_wallet * len(self.wallets), 'ether')
-        gas_reserve = self.web3.to_wei(0.01, 'ether')  # Reserve for gas
+        gas_reserve = self.web3.to_wei(self.config.funder_gas_reserve, 'ether')  # Configurable reserve
         
         if main_balance < total_needed + gas_reserve:
             raise InsufficientFundsError(
