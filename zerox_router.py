@@ -159,43 +159,14 @@ class ZeroXAggregator:
                            token_decimals: int = 18, slippage_percent: float = 1.0) -> Tuple[bool, str]:
         """Swap tokens for ETH via 0x v2 Allowance Holder.
         
-        For Token -> ETH, we need to approve the Allowance Holder.
+        For Token -> ETH, we need to approve the specific spender returned by the quote.
         """
         try:
             amount_units = int(amount_tokens * (10 ** token_decimals))
             
             print(f"[dim]Getting 0x Allowance Holder quote for Token -> ETH...[/dim]")
             
-            # Check and approve allowance if needed
-            token_contract = self.w3.eth.contract(
-                address=self.w3.to_checksum_address(token_address),
-                abi=ERC20_ABI
-            )
-            
-            current_allowance = token_contract.functions.allowance(
-                self.account.address,
-                ALLOWANCE_HOLDER
-            ).call()
-            
-            if current_allowance < amount_units:
-                print(f"[dim]Approving 0x Allowance Holder to spend tokens...[/dim]")
-                approve_tx = token_contract.functions.approve(
-                    ALLOWANCE_HOLDER,
-                    amount_units
-                ).build_transaction({
-                    'from': self.account.address,
-                    'gas': 100000,
-                    'gasPrice': self.w3.eth.gas_price,
-                    'nonce': self.w3.eth.get_transaction_count(self.account.address),
-                    'chainId': self.chain_id,
-                })
-                
-                signed_approve = self.account.sign_transaction(approve_tx)
-                approve_hash = self.w3.eth.send_raw_transaction(signed_approve.raw_transaction)
-                self.w3.eth.wait_for_transaction_receipt(approve_hash, timeout=120)
-                print(f"[dim]Approved 0x Allowance Holder[/dim]")
-            
-            # Get quote
+            # Get quote FIRST to know which spender to approve
             quote = self._get_allowance_holder_quote(
                 token_address,
                 ETH_PLACEHOLDER,  # Native ETH
@@ -208,7 +179,50 @@ class ZeroXAggregator:
             
             print(f"[green]✓ 0x route found![/green]")
             
-            # Get transaction data
+            # Get the allowance target from the quote
+            issues = quote.get('issues', {})
+            allowance_issue = issues.get('allowance', {})
+            allowance_target = allowance_issue.get('spender')
+            
+            if not allowance_target:
+                print(f"[yellow]⚠ No allowance target in quote, using default[/yellow]")
+                allowance_target = ALLOWANCE_HOLDER
+            
+            print(f"[dim]  Allowance target: {allowance_target}[/dim]")
+            
+            # Setup token contract
+            token_contract = self.w3.eth.contract(
+                address=self.w3.to_checksum_address(token_address),
+                abi=ERC20_ABI
+            )
+            
+            # Check and approve the CORRECT allowance target
+            current_allowance = token_contract.functions.allowance(
+                self.account.address,
+                allowance_target
+            ).call()
+            
+            if current_allowance < amount_units:
+                print(f"[dim]Approving {allowance_target[:20]}... to spend tokens...[/dim]")
+                approve_tx = token_contract.functions.approve(
+                    allowance_target,
+                    amount_units
+                ).build_transaction({
+                    'from': self.account.address,
+                    'gas': 100000,
+                    'gasPrice': self.w3.eth.gas_price,
+                    'nonce': self.w3.eth.get_transaction_count(self.account.address),
+                    'chainId': self.chain_id,
+                })
+                
+                signed_approve = self.account.sign_transaction(approve_tx)
+                approve_hash = self.w3.eth.send_raw_transaction(signed_approve.raw_transaction)
+                self.w3.eth.wait_for_transaction_receipt(approve_hash, timeout=120)
+                print(f"[green]✓ Approved spender[/green]")
+            else:
+                print(f"[dim]  Sufficient allowance already granted[/dim]")
+            
+            # Get transaction data from quote
             transaction = quote.get('transaction', {})
             if not transaction:
                 return False, "No transaction data in quote"
