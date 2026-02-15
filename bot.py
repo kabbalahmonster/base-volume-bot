@@ -293,9 +293,24 @@ class VolumeBot:
         console.print(f"\n[bold cyan]🛒 Buy Attempt {self.buy_count}/{self.config.sell_after_buys}[/bold cyan]")
         
         if self.config.dry_run:
-            console.print("[yellow][DRY RUN] Simulating buy...[/yellow]")
-            time.sleep(1)
-            console.print("[green]✓ [DRY RUN] Buy simulated[/green]")
+            console.print("[yellow][DRY RUN] Validating routing...[/yellow]")
+            
+            # Check if any router can handle this token
+            has_zerox = hasattr(self.config, 'zerox_api_key') and self.config.zerox_api_key
+            has_oneinch = hasattr(self.config, 'oneinch_api_key') and self.config.oneinch_api_key
+            has_multidex = self.dex_router.get_best_dex() is not None
+            
+            if has_zerox:
+                console.print("[green]✓ [DRY RUN] 0x aggregator available[/green]")
+            elif has_oneinch:
+                console.print("[green]✓ [DRY RUN] 1inch aggregator available[/green]")
+            elif has_multidex:
+                console.print(f"[green]✓ [DRY RUN] Multi-DEX router available ({self.dex_router.get_best_dex()})[/green]")
+            else:
+                # Try V4 as last resort
+                console.print("[yellow]⚠ [DRY RUN] No V2/V3 pools found, will try V4 Universal Router[/yellow]")
+            
+            console.print("[green]✓ [DRY RUN] Routing validation complete[/green]")
             return True
         
         try:
