@@ -35,7 +35,7 @@ from rich.logging import RichHandler
 
 # Import wallet and DEX routers
 from wallet import SecureKeyManager, SecureWallet
-from oneinch_router import OneInchAggregator
+from zerox_router import ZeroXAggregator
 from dex_router import MultiDEXRouter
 
 # Constants
@@ -170,12 +170,13 @@ class BotConfig:
 class VolumeBot:
     """Main volume bot with integrated trading"""
 
-    def __init__(self, config: BotConfig, private_key: str):
+    def __init__(self, config: BotConfig, private_key: str, zerox_api_key: Optional[str] = None):
         self.config = config
         self.private_key = private_key
+        self.zerox_api_key = zerox_api_key
         self.w3: Optional[Web3] = None
         self.account: Optional[Account] = None
-        self.oneinch: Optional[OneInchAggregator] = None
+        self.zerox: Optional[ZeroXAggregator] = None
         self.dex_router: Optional[MultiDEXRouter] = None
         self.compute_token = None
 
@@ -224,9 +225,9 @@ class VolumeBot:
             console.print(f"[red]✗ Invalid private key: {e}[/red]")
             return False
         
-        # Setup DEX routers (1inch primary, MultiDEX fallback)
-        console.print("[dim]Initializing 1inch aggregator...[/dim]")
-        self.oneinch = OneInchAggregator(self.w3, self.account)
+        # Setup DEX routers (0x primary, MultiDEX fallback)
+        console.print("[dim]Initializing 0x aggregator...[/dim]")
+        self.zerox = ZeroXAggregator(self.w3, self.account, self.zerox_api_key)
         self.dex_router = MultiDEXRouter(self.w3, self.account, COMPUTE_TOKEN)
         self.compute_token = self.w3.eth.contract(
             address=self.w3.to_checksum_address(COMPUTE_TOKEN),
@@ -292,17 +293,17 @@ class VolumeBot:
                 console.print(f"[red]✗ Insufficient ETH balance[/red]")
                 return False
             
-            # Execute swap using 1inch (primary) with fallback to multi-DEX router
-            console.print(f"[dim]Swapping {amount_eth} ETH for $COMPUTE via 1inch...[/dim]")
+            # Execute swap using 0x (primary) with fallback to multi-DEX router
+            console.print(f"[dim]Swapping {amount_eth} ETH for $COMPUTE via 0x...[/dim]")
 
-            success, result = self.oneinch.swap_eth_for_tokens(
+            success, result = self.zerox.swap_eth_for_tokens(
                 COMPUTE_TOKEN,
                 amount_eth,
                 slippage_percent=self.config.slippage_percent
             )
 
             if not success:
-                console.print(f"[yellow]⚠ 1inch failed: {result}[/yellow]")
+                console.print(f"[yellow]⚠ 0x failed: {result}[/yellow]")
                 console.print(f"[dim]Falling back to multi-DEX router...[/dim]")
 
                 success, result = self.dex_router.swap_eth_for_tokens(
@@ -346,13 +347,13 @@ class VolumeBot:
             
             console.print(f"[dim]Selling {compute_balance:.4f} $COMPUTE...[/dim]")
             
-            # Execute swap using 1inch (primary) with fallback to multi-DEX router
-            console.print(f"[dim]Swapping {compute_balance:.4f} $COMPUTE for ETH via 1inch...[/dim]")
+            # Execute swap using 0x (primary) with fallback to multi-DEX router
+            console.print(f"[dim]Swapping {compute_balance:.4f} $COMPUTE for ETH via 0x...[/dim]")
 
             # Get token decimals
             token_decimals = self.compute_token.functions.decimals().call()
 
-            success, result = self.oneinch.swap_tokens_for_eth(
+            success, result = self.zerox.swap_tokens_for_eth(
                 COMPUTE_TOKEN,
                 compute_balance,
                 token_decimals=token_decimals,
@@ -360,7 +361,7 @@ class VolumeBot:
             )
 
             if not success:
-                console.print(f"[yellow]⚠ 1inch failed: {result}[/yellow]")
+                console.print(f"[yellow]⚠ 0x failed: {result}[/yellow]")
                 console.print(f"[dim]Falling back to multi-DEX router...[/dim]")
 
                 success, result = self.dex_router.swap_tokens_for_eth(
@@ -671,7 +672,7 @@ def setup_command():
         console.print("="*60)
 
 
-def run_command(dry_run: bool = False):
+def run_command(dry_run: bool = False, zerox_api_key: Optional[str] = None):
     """Run the bot"""
     # Load config
     try:
@@ -697,8 +698,8 @@ def run_command(dry_run: bool = False):
     if dry_run:
         config.dry_run = True
     
-    # Run bot
-    bot = VolumeBot(config, private_key)
+    # Run bot with 0x API key
+    bot = VolumeBot(config, private_key, zerox_api_key)
     bot.run()
 
 
@@ -794,6 +795,7 @@ def main():
     # Run command
     run_parser = subparsers.add_parser("run", help="Start trading bot")
     run_parser.add_argument("--dry-run", action="store_true", help="Simulation mode")
+    run_parser.add_argument("--zerox-api-key", type=str, help="0x API key (optional, increases rate limits)")
     
     # Withdraw command
     withdraw_parser = subparsers.add_parser("withdraw", help="Withdraw funds")
@@ -810,7 +812,7 @@ def main():
     if args.command == "setup":
         setup_command()
     elif args.command == "run":
-        run_command(dry_run=args.dry_run)
+        run_command(dry_run=args.dry_run, zerox_api_key=args.zerox_api_key)
     elif args.command == "withdraw":
         withdraw_command(to_address=args.to, amount=args.amount, 
                         withdraw_compute=args.compute, dry_run=args.dry_run)
