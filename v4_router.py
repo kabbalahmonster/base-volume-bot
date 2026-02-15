@@ -65,10 +65,9 @@ class V4DirectRouter:
         
         # Try to import the library
         try:
-            from uniswap_universal_router_decoder import RouterCodec, FunctionRecipient, Wei
+            from uniswap_universal_router_decoder import RouterCodec, FunctionRecipient
             self.codec = RouterCodec()
             self.FunctionRecipient = FunctionRecipient
-            self.Wei = Wei
             self.has_library = True
             print("[green]✓ uniswap-universal-router-decoder library loaded[/green]")
         except ImportError as e:
@@ -148,8 +147,8 @@ class V4DirectRouter:
                     chain.v4_swap_exact_in_single(
                         pool_key=pool_key,
                         zero_for_one=zero_for_one,
-                        amount_in=self.Wei(amount_in_wei),
-                        amount_out_min=self.Wei(min_amount_out),
+                        amount_in=amount_in_wei,
+                        amount_out_min=min_amount_out,
                         sqrt_price_limit_x96=0,
                         hook_data=b''
                     )
@@ -251,8 +250,8 @@ class V4DirectRouter:
                     chain.v4_swap_exact_in_single(
                         pool_key=pool_key,
                         zero_for_one=zero_for_one,
-                        amount_in=self.Wei(amount_in_units),
-                        amount_out_min=self.Wei(min_amount_out),
+                        amount_in=amount_in_units,
+                        amount_out_min=min_amount_out,
                         sqrt_price_limit_x96=0,
                         hook_data=b''
                     )
