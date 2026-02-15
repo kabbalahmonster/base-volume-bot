@@ -158,14 +158,15 @@ class V4DirectRouter:
                     
                     print(f"[green]✓ Found V4 pool: fee={fee}[/green]")
                     
-                    # Build transaction with Base UR address
+                    # Build transaction with Base UR address (checksummed)
                     deadline = int(time.time()) + deadline_seconds
+                    base_ur = self.w3.to_checksum_address(UNIVERSAL_ROUTER)
                     
                     tx = chain.build_transaction(
                         sender=self.account.address,
                         value=amount_in_wei,
                         deadline=deadline,
-                        ur_address=self.router_address  # Base Universal Router
+                        ur_address=base_ur
                     )
                     
                     print(f"[dim]Transaction built, sending...[/dim]")
@@ -259,11 +260,12 @@ class V4DirectRouter:
                     v4_swap.take(currency=self.weth, recipient=self.account.address, amount=min_amount_out)
                     
                     deadline = int(time.time()) + deadline_seconds
+                    base_ur = self.w3.to_checksum_address(UNIVERSAL_ROUTER)
                     
                     tx = chain.build_transaction(
                         sender=self.account.address,
                         deadline=deadline,
-                        ur_address=self.router_address  # Base Universal Router
+                        ur_address=base_ur
                     )
                     
                     signed = self.account.sign_transaction(tx)

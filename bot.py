@@ -366,12 +366,13 @@ class VolumeBot:
                         # take(currency, recipient, amount) - specify exact recipient
                         v4_swap.take(currency=compute, recipient=self.account.address, amount=1)
                         
-                        # Build transaction with Base UR address
+                        # Build transaction with Base UR address (checksummed)
+                        base_ur = self.w3.to_checksum_address("0x6c083a36f731ea994739ef5e8647d18553d41f76")
                         tx = chain.build_transaction(
                             sender=self.account.address,
                             deadline=int(time.time()) + 300,
                             value=test_amount_wei,
-                            ur_address="0x6c083a36f731ea994739ef5e8647d18553d41f76"  # Base Universal Router
+                            ur_address=base_ur
                         )
                         
                         console.print(f"[dim][DRY RUN] Commands: {tx.get('data', 'N/A')[:50]}...[/dim]")
