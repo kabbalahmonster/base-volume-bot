@@ -1,351 +1,175 @@
-# Swarm Wallet Feature Guide
+# Swarm Trading Guide
 
 ## Overview
 
-The Swarm Wallet feature allows you to create and manage multiple wallets for distributed trading volume. Instead of trading from a single wallet, you can create a "swarm" of wallets that cycle through buys and sells, creating more organic-looking volume.
-
-## Security First
-
-⚠️ **IMPORTANT SECURITY NOTES:**
-
-1. **All swarm wallet keys are encrypted** with your password using PBKDF2 + Fernet
-2. **Never share your swarm password** - it decrypts all swarm wallet keys
-3. **Always reclaim funds before dissolving** - the system prevents dissolving wallets with balance
-4. **Keep your main wallet secure** - it's the source of all funds
-
-## Installation
-
-```bash
-# Clone the repo
-git clone https://github.com/kabbalahmonster/base-volume-bot.git
-cd base-volume-bot
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Checkout swarm feature
-git checkout feature/swarm-wallets
-```
+Swarm mode coordinates multiple wallets for volume generation. This distributes trading across several addresses, making volume appear more organic.
 
 ## Quick Start
 
-### 1. Setup Your Bot
+### 1. Create Swarm Wallets
 
 ```bash
-python bot.py setup
+python swarm_cli.py create --count 3
 ```
 
-This will:
-- Encrypt your main wallet private key
-- Create a configuration file
+You'll be prompted for:
+- **Swarm password** (encrypts all wallet keys, min 8 chars)
+- Creates `swarm_wallets.enc` (3 encrypted private keys)
 
-### 2. Create a Swarm
+**Output:**
+```
+✓ Swarm created with 3 wallets
+Wallet 0: 0xABC...123
+Wallet 1: 0xDEF...456
+Wallet 2: 0xGHI...789
+Password backup saved to: swarm_password_backup.txt
+```
+
+⚠️ **SAVE THE PASSWORD!** Without it, wallets are unrecoverable.
+
+### 2. Fund Swarm Wallets
 
 ```bash
-python bot.py swarm create --count 10
+python swarm_cli.py fund --amount 0.001
 ```
 
-Creates 10 new swarm wallets. Each wallet:
-- Has its own unique address
-- Is encrypted with your password
-- Is tracked in `.swarm.json`
+You'll be prompted for:
+- **Main wallet private key** (for funding, not stored)
 
-### 3. Fund the Swarm
+This sends 0.001 ETH to each of the 3 wallets.
 
-```bash
-python bot.py swarm fund --amount-eth 0.01
-```
+**Requirements:**
+- Main wallet needs: `(3 × 0.001) + 0.005 gas reserve = 0.008 ETH`
 
-Distributes 0.01 ETH to each swarm wallet from your main wallet.
+### 3. Configure Swarm Trading
 
-### 4. Run with Swarm
-
-```bash
-python bot.py run --swarm-mode
-```
-
-The bot will cycle through swarm wallets for trades.
-
-### 5. Reclaim Funds
-
-When you're done:
-
-```bash
-python bot.py swarm reclaim
-```
-
-Returns all funds from swarm wallets back to your main wallet.
-
-### 6. Dissolve Swarm
-
-After reclaiming:
-
-```bash
-python bot.py swarm dissolve
-```
-
-Removes all swarm wallet data (only works if all wallets have zero balance).
-
-## Commands Reference
-
-### `swarm create`
-
-Create new swarm wallets.
-
-```bash
-python bot.py swarm create --count 10
-```
-
-Options:
-- `--count`: Number of wallets to create (default: 5)
-
-### `swarm fund`
-
-Distribute ETH to all swarm wallets.
-
-```bash
-python bot.py swarm fund --amount-eth 0.01
-```
-
-Options:
-- `--amount-eth`: Amount of ETH per wallet (default: 0.002)
-
-**⚠️ Warning:** This sends real ETH from your main wallet!
-
-### `swarm status`
-
-Show swarm wallet status.
-
-```bash
-python bot.py swarm status
-```
-
-Shows:
-- Wallet addresses
-- ETH balances
-- Number of trades per wallet
-- Last used timestamp
-
-### `swarm reclaim`
-
-Return all funds to main wallet.
-
-```bash
-python bot.py swarm reclaim --to 0x...  # Optional: different destination
-```
-
-Options:
-- `--to`: Optional different destination address (default: main wallet)
-
-**⚠️ Confirmation Required:** You must type "RECLAIM" to proceed.
-
-### `swarm dissolve`
-
-Destroy swarm wallets.
-
-```bash
-python bot.py swarm dissolve
-```
-
-**⚠️ Safety Check:** Only works if ALL wallets have zero balance. Use `reclaim` first!
-
-### `run --swarm-mode`
-
-Run the bot with swarm trading.
-
-```bash
-python bot.py run --swarm-mode
-```
-
-In swarm mode:
-- Bot cycles through wallets round-robin
-- Each wallet makes one trade, then moves to next
-- Creates distributed, organic-looking volume
-
-### `swarm withdraw`
-
-Withdraw from main wallet or swarm wallets.
-
-```bash
-# Withdraw from main wallet
-python bot.py withdraw 0xYOUR_ADDRESS --amount 0.5
-
-# Withdraw all ETH from main wallet (keeps gas)
-python bot.py withdraw 0xYOUR_ADDRESS
-
-# Withdraw all funds including COMPUTE
-python bot.py withdraw 0xYOUR_ADDRESS --compute
-```
-
-Options:
-- `--amount`: Specific ETH amount (omit for all)
-- `--compute`: Also withdraw all COMPUTE tokens
-
-## Configuration
-
-Edit `bot_config.json` for swarm settings:
-
+Edit `swarm_config.json`:
 ```json
 {
-  "chain": "base",
-  "buy_amount_eth": 0.002,
-  "buy_interval_minutes": 5,
-  "sell_after_buys": 10,
-  "slippage_percent": 2.0,
-  "max_gas_gwei": 0.5,
-  "swarm_enabled": true,
-  "swarm_size": 10
+  "rotation_mode": "round_robin",
+  "buys_per_cycle": 1,
+  "buy_interval_minutes": 2,
+  "auto_sell": true,
+  "max_cycles": 1
 }
 ```
 
-## How It Works
+### 4. Run Swarm Trading
 
-### Swarm Creation
+```bash
+python swarm_cli.py run
+```
 
-1. Generates N random Ethereum wallets
-2. Encrypts each private key with your password
-3. Stores encrypted keys in `.swarm.json`
-4. Displays wallet addresses (not private keys)
+**What happens:**
+1. Wallet 0 buys → wait 2 min
+2. Wallet 1 buys → wait 2 min
+3. Wallet 2 buys → wait 2 min
+4. All wallets sell
+5. Stop (max_cycles: 1 reached)
 
-### Trading Cycle
+### 5. Reclaim Funds
 
-1. Bot selects next wallet in round-robin
-2. Decrypts wallet key temporarily in memory
-3. Executes trade
-4. Clears key from memory
-5. Moves to next wallet
+```bash
+python swarm_cli.py reclaim --main-address 0xYourMainWallet
+```
 
-### Fund Management
+This:
+- Sells all tokens for ETH
+- Sends all ETH back to your main wallet
+- Keeps minimal gas reserve in swarm wallets
 
-- **Distribution:** Main wallet → All swarm wallets
-- **Reclamation:** All swarm wallets → Main wallet (or specified address)
-- **Safety:** Cannot dissolve wallets with balance
+### 6. Dissolve Swarm (Optional)
 
-## Best Practices
+After reclaiming, archive the wallet file:
+```bash
+mv swarm_wallets.enc swarm_wallets.enc.archived.$(date +%Y%m%d)
+```
 
-### Creating a Swarm
+## Rotation Modes
 
-1. **Start small:** Create 5-10 wallets for testing
-2. **Fund modestly:** 0.01 ETH per wallet is plenty for testing
-3. **Test first:** Use `--dry-run` mode
-4. **Monitor:** Check `swarm status` regularly
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `round_robin` | Sequential (0,1,2,0,1,2...) | Balanced usage |
+| `random` | Random selection | Maximum distribution |
+| `least_used` | Fewest trades first | Even wear |
+| `balance_based` | Highest ETH balance first | Optimize gas |
 
-### Running with Swarm
+## Safety Limits
 
-1. **Don't over-trade:** Start with longer intervals (10+ minutes)
-2. **Monitor gas:** Keep `max_gas_gwei` reasonable
-3. **Watch balances:** Ensure wallets have enough for gas
-4. **Log activity:** Review `volume_bot.log` regularly
+Always use these safeguards:
 
-### Exiting Safely
+```json
+{
+  "max_cycles": 5,
+  "buy_amount_eth": 0.0005,
+  "slippage_percent": 2.0
+}
+```
 
-1. **Stop bot:** Ctrl+C to stop gracefully
-2. **Check status:** `python bot.py swarm status`
-3. **Reclaim funds:** `python bot.py swarm reclaim`
-4. **Verify zero balances:** Check status again
-5. **Dissolve swarm:** `python bot.py swarm dissolve`
-
-## Security FAQ
-
-**Q: Where are swarm wallet keys stored?**
-A: Encrypted in `.swarm.json` using PBKDF2 + Fernet. Requires your password to decrypt.
-
-**Q: Can someone steal funds if they get .swarm.json?**
-A: No, they need your password to decrypt the keys.
-
-**Q: What happens if I forget my password?**
-A: You cannot recover swarm wallets. Always reclaim funds before potential password loss.
-
-**Q: Is it safe to commit .swarm.json to git?**
-A: No! Add `.swarm.json` to .gitignore. It contains encrypted keys.
-
-**Q: Can I use the same password as my main wallet?**
-A: Technically yes, but for security use different passwords.
-
-**Q: What if a transaction fails?**
-A: The bot logs errors and continues to next wallet. Check logs for details.
+**Test first:**
+```bash
+python swarm_cli.py run --dry-run
+```
 
 ## Troubleshooting
 
-### "No wallets in swarm"
+### "Insufficient funds for gas"
+- Increase `funder_gas_reserve` in config
+- Or fund main wallet with more ETH
 
-Run `python bot.py swarm create --count 5` first.
+### "No wallets found"
+- Check `swarm_wallets.enc` exists
+- Verify password is correct
 
-### "Insufficient balance for distribution"
+### "Nonce too low" during funding
+- Wait 10 seconds and retry
+- RPC may be lagging
 
-Your main wallet needs more ETH. Check with `python bot.py balance`.
+## Best Practices
 
-### "Cannot dissolve - wallets with non-zero balance"
+1. **Start small**: Test with 2-3 wallets first
+2. **Dry run**: Always test with `--dry-run`
+3. **Monitor gas**: Keep extra ETH for gas spikes
+4. **Backup password**: Without it, funds are lost
+5. **Reclaim promptly**: Don't leave funds in swarm wallets
 
-Run `python bot.py swarm reclaim` first to return all funds.
-
-### "Failed to decrypt wallet"
-
-Wrong password. Try again with correct password.
-
-### "Gas too high"
-
-Increase `max_gas_gwei` in config or wait for lower gas.
-
-## Advanced Usage
-
-### Custom Swarm Size
+## Example: Full Cycle
 
 ```bash
-# Create 50 wallets for massive volume
-python bot.py swarm create --count 50
+# 1. Setup
+python swarm_cli.py create --count 3
+# Save password: MySecurePass123
 
-# Fund with 0.005 ETH each (250x smaller trades)
-python bot.py swarm fund --amount-eth 0.005
+# 2. Fund (main wallet needs ~0.01 ETH)
+python swarm_cli.py fund --amount 0.001
+
+# 3. Run (1 buy each, then sell)
+python swarm_cli.py run --buys-per-cycle 1 --max-cycles 1
+
+# 4. Reclaim
+python swarm_cli.py reclaim --main-address 0xYourWallet
+
+# 5. Verify empty
+python swarm_cli.py status
+
+# 6. Archive
+mv swarm_wallets.enc swarm_wallets.enc.archived.20260216
 ```
 
-### Multi-Swarm Strategy
+## Gas Estimates
 
-You can maintain multiple swarms by renaming `.swarm.json`:
+Per wallet, per cycle:
+- Funding: ~21,000 gas
+- Buy (0x): ~180,000 gas
+- Approval: ~50,000 gas (first sell only)
+- Sell (0x): ~180,000 gas
+- Reclaim: ~21,000 gas
 
-```bash
-# Save current swarm
-mv .swarm.json .swarm-backup-1.json
+**Total per wallet:** ~450,000 gas ≈ 0.0002-0.0004 ETH at normal gas prices
 
-# Create new swarm
-python bot.py swarm create --count 10
+## Security Notes
 
-# Switch back
-mv .swarm.json .swarm-backup-2.json
-mv .swarm-backup-1.json .swarm.json
-```
-
-### Programmatic Access
-
-```python
-from swarm import SwarmManager
-
-manager = SwarmManager(main_key, password, w3)
-
-# Create swarm
-addresses = manager.create_swarm(10)
-
-# Fund
-manager.distribute_funds(0.01)
-
-# Get next wallet
-account, wallet_info = manager.get_next_wallet()
-
-# Reclaim
-manager.reclaim_all_funds()
-```
-
-## Support
-
-For issues or questions:
-1. Check logs: `volume_bot.log`
-2. Review this guide
-3. Check GitHub issues
-
-## License
-
-MIT License - See LICENSE file
-
----
-
-*Built by Clawdelia for the Cult of the Shell* 🦑
+- Swarm passwords are hashed with PBKDF2
+- Private keys never leave encrypted file
+- Main wallet key only used for funding (not stored)
+- Always verify addresses on BaseScan before funding
